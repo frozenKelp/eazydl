@@ -16,6 +16,8 @@ import re as _re
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import List, Optional
+from ipaddress import ip_address, ip_network
+from socket import getaddrinfo
 from urllib.parse import urlparse
 
 import requests
@@ -26,7 +28,13 @@ from sqlalchemy.orm import Session
 
 from database import Download, LinkList, SessionLocal, Setting, get_db, init_db
 from downloader import dm
-from scraper import get_fuckingfast_links, resolve_fuckingfast_download, search_fitgirl
+from scraper import (
+    clean_filename,
+    get_fuckingfast_downloads,
+    get_fuckingfast_links,
+    resolve_fuckingfast_download_info,
+    search_fitgirl,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -128,16 +136,51 @@ def serve_js(filename: str):
     return _read_file(os.path.join(FRONTEND_DIR, "js", filename), "application/javascript")
 
 
+PRIVATE_NETS = tuple(
+    ip_network(net)
+    for net in (
+        "127.0.0.0/8",
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "169.254.0.0/16",
+        "::1/128",
+        "fc00::/7",
+        "fe80::/10",
+    )
+)
+
+
+def _is_public_image_url(raw_url: str) -> bool:
+    parsed = urlparse(raw_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return False
+    try:
+        addresses = [ip_address(info[4][0]) for info in getaddrinfo(parsed.hostname, None)]
+    except OSError:
+        return False
+    return not any(any(addr in net for net in PRIVATE_NETS) for addr in addresses)
+
+
 @app.get("/api/image")
 def api_proxy_image(url: str):
-    """Proxy FitGirl thumbnails so Browse cards do not break on hotlink/referrer rules."""
-    parsed = urlparse(url)
-    host = (parsed.hostname or "").lower()
-    allowed = host == "fitgirl-repacks.site" or host.endswith(".fitgirl-repacks.site")
-    if parsed.scheme not in {"http", "https"} or not allowed:
-        raise HTTPException(400, "Unsupported image host.")
+    """Proxy public thumbnails so Browse cards do not break on hotlink/referrer rules."""
+    if not _is_public_image_url(url):
+        raise HTTPException(400, "Unsupported image URL.")
     try:
-        resp = requests.get(url, headers={"user-agent": "EasyDL/1.0"}, timeout=10)
+        resp = requests.get(
+            url,
+            headers={
+                "accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+                "referer": "https://fitgirl-repacks.site/",
+                "user-agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/131.0.0.0 Safari/537.36"
+                ),
+            },
+            timeout=10,
+        )
         resp.raise_for_status()
     except requests.RequestException as exc:
         raise HTTPException(502, f"Could not load image: {exc}")
@@ -211,7 +254,7 @@ def api_get_downloads(list_id: int, db: Session = Depends(get_db)):
         result.append({
             "id":               d.id,
             "url":              d.source_url,
-            "filename":         live.get("filename") or d.filename or "",
+            "filename":         clean_filename(d.filename) or clean_filename(live.get("filename")) or d.filename or live.get("filename") or "",
             "status":           live.get("status") or d.status,
             "bytes_downloaded": bytes_dl,
             "total_bytes":      total,
@@ -259,25 +302,35 @@ def api_add_game(data: GameAdd, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(lst)
 
-    # Scrape download links
+    # Scrape download links and keep FitGirl's human filenames when present.
     try:
-        links = get_fuckingfast_links(data.game_url)
+        downloads = get_fuckingfast_downloads(data.game_url)
     except Exception as exc:
         raise HTTPException(400, str(exc))
 
-    # Add new links, skip duplicates
-    existing = {d.source_url for d in db.query(Download).filter(Download.list_id == lst.id).all()}
-    new_links = [u for u in links if u not in existing]
-    for url in new_links:
-        db.add(Download(list_id=lst.id, source_url=url, status="pending"))
+    # Add new links, skip duplicates, and backfill missing filenames on old rows.
+    existing_rows = {
+        d.source_url: d
+        for d in db.query(Download).filter(Download.list_id == lst.id).all()
+    }
+    added = 0
+    for item in downloads:
+        url = item["url"]
+        filename = clean_filename(item.get("filename"))
+        if existing := existing_rows.get(url):
+            if filename and not existing.filename:
+                existing.filename = filename
+            continue
+        db.add(Download(list_id=lst.id, source_url=url, filename=filename or "", status="pending"))
+        added += 1
     db.commit()
 
     return {
         "id":          lst.id,
         "title":       title,
-        "found":       len(links),
-        "added":       len(new_links),
-        "already_had": len(existing),
+        "found":       len(downloads),
+        "added":       added,
+        "already_had": len(existing_rows),
     }
 
 
@@ -296,8 +349,8 @@ async def _resolve_and_start(dl_id: int, base_path: str, list_name: str) -> None
         db.commit()
 
         try:
-            actual_url = await asyncio.to_thread(
-                resolve_fuckingfast_download, dl.source_url
+            resolved = await asyncio.to_thread(
+                resolve_fuckingfast_download_info, dl.source_url
             )
         except Exception as exc:
             dl.status = "failed"
@@ -305,7 +358,13 @@ async def _resolve_and_start(dl_id: int, base_path: str, list_name: str) -> None
             db.commit()
             return
 
-        filename  = actual_url.split("/")[-1].split("?")[0] or f"file_{dl_id}"
+        actual_url = resolved.url
+        filename = (
+            clean_filename(dl.filename)
+            or clean_filename(resolved.filename)
+            or clean_filename(actual_url)
+            or f"file_{dl_id}"
+        )
         safe_name = (
             "".join(c if c.isalnum() or c in " _-" else "_" for c in list_name)
             .strip("_") or "default"
@@ -334,8 +393,8 @@ async def _resolve_and_start(dl_id: int, base_path: str, list_name: str) -> None
                 d.status           = snap["status"]
                 d.bytes_downloaded = snap["bytes_downloaded"]
                 d.total_bytes      = snap["total_bytes"]
-                if snap.get("filename"):
-                    d.filename = snap["filename"]
+                if snap_name := clean_filename(snap.get("filename")):
+                    d.filename = snap_name
                 if snap["status"] == "completed":
                     d.completed_at = datetime.now(timezone.utc)
                 if snap.get("error"):
