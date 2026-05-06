@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EasyDL — Browse</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <script defer src="/js/api.js"></script>
+  <script defer src="/js/browse.js"></script>
+</head>
+<body>
+  <nav>
+    <a class="nav-logo" href="/library" aria-label="EasyDL library">
+      <span class="nav-logo-icon">↓</span>
+      <span>EasyDL</span>
+    </a>
+    <div class="nav-links" aria-label="Primary navigation">
+      <a class="nav-link" href="/library">Library</a>
+      <a class="nav-link" href="/browse">Browse</a>
+      <a class="nav-link" href="/settings">Settings</a>
+    </div>
+    <div class="nav-spacer"></div>
+    <div id="nav-speed" class="nav-speed" aria-live="polite"></div>
+    <div class="aria2-pill"><span id="nav-dot" class="status-dot"></span><span id="nav-label">checking</span></div>
+  </nav>
+
+  <main class="page">
+    <header class="page-header stacked">
+      <div>
+        <h1>Browse</h1>
+        <p class="page-subtitle">Search FitGirl repacks. Press Add to Library and EasyDL creates one game entry with all found fuckingfast links.</p>
+      </div>
+      <form id="search-form" class="search-form">
+        <input id="search-input" type="search" placeholder="Search games…" autocomplete="off">
+        <button class="btn btn-primary" type="submit">Search</button>
+        <button id="home-btn" class="btn btn-ghost" type="button">Latest</button>
+      </form>
+    </header>
+
+    <section id="browse-results" aria-live="polite">
+      <div class="loading"><span class="spinner"></span> Loading games…</div>
+    </section>
+  </main>
+</body>
+</html>

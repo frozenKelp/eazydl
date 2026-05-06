@@ -202,7 +202,10 @@ class Aria2Manager:
             snapshot = {
                 "id":               dl_id,
                 "gid":              dl.gid,
-                "filename":         dl.name or cached_name,
+                # Prefer the filename EasyDL explicitly passed to aria2c.
+                # Some file hosts expose random CDN path names; aria2p may
+                # report those back even when the output name is correct.
+                "filename":         cached_name or dl.name,
                 "status":           _map_status(dl.status),
                 "bytes_downloaded": dl.completed_length,
                 "total_bytes":      dl.total_length,
