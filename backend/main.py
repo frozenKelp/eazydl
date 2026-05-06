@@ -16,7 +16,9 @@ import re as _re
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import List, Optional
+from urllib.parse import urlparse
 
+import requests
 from fastapi import Body, Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -125,6 +127,24 @@ def serve_js(filename: str):
         raise HTTPException(404)
     return _read_file(os.path.join(FRONTEND_DIR, "js", filename), "application/javascript")
 
+
+@app.get("/api/image")
+def api_proxy_image(url: str):
+    """Proxy FitGirl thumbnails so Browse cards do not break on hotlink/referrer rules."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    allowed = host == "fitgirl-repacks.site" or host.endswith(".fitgirl-repacks.site")
+    if parsed.scheme not in {"http", "https"} or not allowed:
+        raise HTTPException(400, "Unsupported image host.")
+    try:
+        resp = requests.get(url, headers={"user-agent": "EasyDL/1.0"}, timeout=10)
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        raise HTTPException(502, f"Could not load image: {exc}")
+    media_type = resp.headers.get("content-type", "image/jpeg").split(";", 1)[0]
+    if not media_type.startswith("image/"):
+        raise HTTPException(400, "URL did not return an image.")
+    return Response(content=resp.content, media_type=media_type)
 
 # ── Lists ──────────────────────────────────────────────────────────────────────
 

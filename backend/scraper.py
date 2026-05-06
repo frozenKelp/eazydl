@@ -16,6 +16,7 @@ Bug fixed vs. original:
 import re
 import threading
 from typing import Dict, List, Optional
+from urllib.parse import urljoin
 
 import requests
 from bs4 import BeautifulSoup
@@ -134,11 +135,21 @@ def search_fitgirl(query: str = "", page: int = 1) -> List[Dict]:
         title: str = link_tag.get_text(strip=True)
         game_url: str = link_tag["href"]
 
-        # Thumbnail — try data-src first (lazy-loaded), then src
+        # Thumbnail — FitGirl/WordPress often lazy-loads images, so check
+        # every common attribute and normalize relative URLs.
         img_tag = article.find("img")
         image: Optional[str] = None
         if img_tag:
-            image = img_tag.get("data-src") or img_tag.get("src")
+            image = (
+                img_tag.get("data-src")
+                or img_tag.get("data-lazy-src")
+                or img_tag.get("data-original")
+                or img_tag.get("src")
+            )
+            if not image and (srcset := (img_tag.get("data-srcset") or img_tag.get("srcset"))):
+                image = srcset.split(",", 1)[0].strip().split(" ", 1)[0]
+            if image:
+                image = urljoin(game_url, image)
 
         # Short excerpt
         content_div = article.find("div", class_="entry-content")
