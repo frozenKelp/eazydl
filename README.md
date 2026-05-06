@@ -1,10 +1,10 @@
 # EasyDL
 
-EasyDL is a local web download manager for FitGirl/FuckingFast workflows.
-It lets you browse supported pages, add entries to a personal library, and
-control downloads through `aria2c` from a simple browser UI.
+EasyDL is a local web download manager for FitGirl/FuckingFast workflows. It lets
+you browse supported pages, save entries to a personal library, and control
+downloads through `aria2c` from a simple browser UI.
 
-Use this project only for content you are legally allowed to download.
+Use it only for content you are legally allowed to download.
 
 ## Contents
 
@@ -14,6 +14,7 @@ Use this project only for content you are legally allowed to download.
 - [Quick Start](#quick-start)
 - [Usage](#usage)
 - [Configuration](#configuration)
+- [Project Layout](#project-layout)
 - [Development](#development)
 - [Contributing](#contributing)
 - [Troubleshooting](#troubleshooting)
@@ -28,26 +29,26 @@ EasyDL runs a FastAPI server on your machine and serves three pages:
 - Browse: search or browse supported source pages and add items.
 - Settings: download path, concurrency, appearance, and runtime status.
 
-The backend stores data in SQLite and delegates downloads to `aria2c` through
-the `aria2p` Python library. The frontend is plain HTML, CSS, and JavaScript.
+The backend stores data in SQLite and sends downloads to `aria2c` through
+`aria2p`. The frontend is plain HTML, CSS, and JavaScript.
 
 ## Features
 
-- Local-first web UI with no hosted service.
+- Local-first browser UI.
 - Browse and search supported source pages.
-- Save entries with title, cover image, size, description, and categories.
-- Extract supported download links into a local library.
+- Save title, cover image, size, description, and categories.
+- Extract supported download links into your library.
 - Start, pause, resume, stop, and delete downloads.
-- Show live progress, speed, status, and file size.
+- View live progress, speed, status, and file size.
 - Configure concurrent downloads and connections per file.
 - Resume partial files when the source and `aria2c` support it.
-- Works with either `uv` or standard Python virtual environments.
+- Run with either `uv` or a standard Python virtual environment.
 
 ## Requirements
 
 - Python 3.10 or newer.
 - `aria2c` installed and available on `PATH`.
-- Dependencies from `requirements.txt`.
+- Python packages from `requirements.txt`.
 
 Install `aria2c`:
 
@@ -66,30 +67,23 @@ git clone <repo-url>
 cd eazydl
 ```
 
-### Option 1: uv
-
-Create an environment and install dependencies:
+### With uv
 
 ```bash
 uv venv
 uv pip install -r requirements.txt
-```
-
-Run the app:
-
-```bash
 uv run python run.py
 ```
 
-### Option 2: pip
+### With pip
 
-Create and activate a virtual environment:
+Create a virtual environment:
 
 ```bash
 python -m venv .venv
 ```
 
-On Windows:
+Activate it:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
@@ -101,14 +95,14 @@ On macOS or Linux:
 source .venv/bin/activate
 ```
 
-Install dependencies and run the app:
+Install dependencies and run:
 
 ```bash
 python -m pip install -r requirements.txt
 python run.py
 ```
 
-Open the app:
+Open:
 
 ```text
 http://localhost:8000
@@ -116,16 +110,16 @@ http://localhost:8000
 
 ## Usage
 
-1. Open the Browse page.
+1. Open Browse.
 2. Search for an entry or load the popular list.
 3. Click Add to save it to your Library.
-4. Open the Library page.
-5. Click Start on a game or on individual files.
+4. Open Library.
+5. Start a game or individual files.
 6. Use Pause, Resume, Stop, and Delete as needed.
 7. Open Settings to change paths, concurrency, and UI preferences.
 
-Downloaded files are saved under the configured download path. By default,
-that path is the repository-local `downloads/` directory.
+Downloads go to the configured download path. By default, that is the repo-local
+`downloads/` folder.
 
 ## Configuration
 
@@ -168,14 +162,14 @@ eazydl/
 
 ## Development
 
-Run the development server:
+Run the dev server:
 
 ```bash
 uv run python run.py
 ```
 
-The server uses reload mode for files in `backend/`. Frontend files are served
-directly from `frontend/`, so refresh the browser after changing HTML, CSS, or
+The backend reloads on changes under `backend/`. Frontend files are served
+directly from `frontend/`, so refresh the browser after editing HTML, CSS, or
 JavaScript.
 
 Run a syntax check:
@@ -185,22 +179,19 @@ uv run python -m py_compile backend/database.py backend/scraper.py
 uv run python -m py_compile backend/main.py backend/downloader.py run.py
 ```
 
-If you are not using `uv`, run the same commands with `python` from your active
-virtual environment.
+Without `uv`, run the same commands with `python` from your active virtual
+environment.
 
 ## Contributing
 
-Contributions are welcome when they keep the app local-first, understandable,
-and safe to run.
+Contributions are welcome when they keep the app local-first, readable, and safe
+to run.
 
-### Before You Start
+Before larger changes, open an issue or describe the plan. Keep pull requests
+focused, avoid generated files, and preserve support for both `uv` and standard
+Python installs.
 
-1. Open an issue or describe the change before large rewrites.
-2. Keep changes focused on one feature or fix.
-3. Avoid committing generated files, local databases, or downloads.
-4. Preserve compatibility with both `uv` and standard Python installs.
-
-### Suggested Workflow
+Suggested workflow:
 
 1. Fork or branch from the main development branch.
 2. Install dependencies with `uv pip install -r requirements.txt`.
@@ -209,22 +200,22 @@ and safe to run.
 5. Test the relevant UI flow in the browser.
 6. Submit a pull request with a short summary and test notes.
 
-### Good First Contributions
+Good first contributions:
 
-- Improve empty, loading, or error states in the UI.
+- Improve empty, loading, or error states.
 - Add focused tests around scraper helpers.
 - Harden URL validation before network requests.
 - Improve duplicate-link handling.
-- Add screenshots or a short demo GIF to the README.
+- Add screenshots or a short demo GIF.
 - Document platform-specific `aria2c` setup steps.
 
-### Code Style
+Code style:
 
 - Prefer small, readable changes.
 - Keep backend blocking I/O out of the async event loop.
-- Use existing vanilla JavaScript patterns on the frontend.
-- Keep Markdown lint-friendly when editing docs.
-- Do not add new frameworks unless the benefit is clear.
+- Follow the existing vanilla JavaScript patterns.
+- Keep Markdown lint-friendly.
+- Add new frameworks only when the benefit is clear.
 
 ## Troubleshooting
 
@@ -241,9 +232,8 @@ in the downloader code.
 
 ### Browse Has No Results
 
-Browse depends on remote page availability and HTML structure. Try a different
-query, reduce the page size, or check whether the site is reachable from your
-machine.
+Browse depends on remote pages and their HTML structure. Try another query,
+reduce the page size, or check whether the site is reachable from your machine.
 
 ### Downloads Stay Pending
 
@@ -256,14 +246,14 @@ Common causes:
 
 ## Security and Legal Notes
 
-EasyDL is designed as a local personal tool. Do not expose it directly to the
-public internet without authentication, stricter URL validation, and careful
-review of filesystem write paths.
+EasyDL is a local personal tool. Do not expose it to the public internet without
+authentication, stricter URL validation, and careful review of filesystem write
+paths.
 
-This project does not grant permission to download copyrighted material. You
-are responsible for complying with source-site terms and applicable law.
+This project does not grant permission to download copyrighted material. You are
+responsible for source-site terms and applicable law.
 
 ## License
 
-No license file is currently included. Add a license before distributing the
-project publicly or accepting external contributions.
+No license file is included yet. Add one before distributing the project publicly
+or accepting external contributions.
