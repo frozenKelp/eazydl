@@ -28,9 +28,16 @@ HEADERS: dict[str, str] = {
     ),
 }
 
+POPULAR_REPACKS_URL = "https://fitgirl-repacks.site/popular-repacks-of-the-year/"
+
 ARCHIVE_RE = re.compile(
     r"(?P<name>[A-Za-z0-9][A-Za-z0-9 ._+()\[\]{}'!,&@#$%^=-]{2,240}\."
     r"(?:part\d+\.rar|rar|r\d{2}|zip|7z|iso|bin))",
+    re.IGNORECASE,
+)
+SIZE_VALUE_RE = re.compile(
+    r"(?:from\s+)?\d+(?:[.,]\d+)?\s*(?:KB|MB|GB|TB)"
+    r"(?:\s*(?:/|-|\u2013|\u2014|to)\s*(?:\d+(?:[.,]\d+)?\s*)?(?:KB|MB|GB|TB))?",
     re.IGNORECASE,
 )
 
@@ -124,18 +131,10 @@ def _filename_from_ff_page(soup: BeautifulSoup, html: str) -> Optional[str]:
     return _best_filename_from_text(soup.get_text(" ", strip=True)) or _best_filename_from_text(html)
 
 
-def _image_from_article(article, base_url: str) -> Optional[str]:
-    """Extract the most likely post thumbnail from a WordPress/FitGirl article."""
-    img_tag = (
-        article.find("img", class_=re.compile(r"wp-post-image|attachment-", re.I))
-        or article.select_one(".entry-content img, .post-thumbnail img, figure img")
-        or article.find("img")
-    )
+def _image_from_img(img_tag, base_url: str) -> Optional[str]:
     if not img_tag:
         return None
 
-    # Lazy-load plugins disagree on attributes. Prefer real/lazy srcset because
-    # FitGirl thumbnails commonly come through WordPress/i0.wp.com there.
     for attr in ("data-src", "data-lazy-src", "data-original", "data-orig-file", "src"):
         value = img_tag.get(attr)
         if value and not value.startswith("data:"):
@@ -145,13 +144,22 @@ def _image_from_article(article, base_url: str) -> Optional[str]:
         srcset = img_tag.get(attr)
         if not srcset:
             continue
-        # Use the last candidate: it is usually the largest thumbnail.
         candidates = [part.strip().split(" ", 1)[0] for part in srcset.split(",") if part.strip()]
         candidates = [c for c in candidates if c and not c.startswith("data:")]
         if candidates:
             return urljoin(base_url, candidates[-1])
 
     return None
+
+
+def _image_from_article(article, base_url: str) -> Optional[str]:
+    """Extract the most likely post thumbnail from a WordPress/FitGirl article."""
+    img_tag = (
+        article.find("img", class_=re.compile(r"wp-post-image|attachment-", re.I))
+        or article.select_one(".entry-content img, .post-thumbnail img, figure img")
+        or article.find("img")
+    )
+    return _image_from_img(img_tag, base_url)
 
 
 GAME_CATEGORIES = {
@@ -225,6 +233,23 @@ def _clean_excerpt(text: str) -> str:
     return text[:260].rstrip(" ,;:-–—")
 
 
+def _clean_size(value: str) -> Optional[str]:
+    value = re.sub(r"\s+", " ", value or "").strip(" .,:;|-")
+    value = value.replace("\u2013", "-").replace("\u2014", "-")
+    return value[:80] or None
+
+
+def _size_from_text(text: str) -> Optional[str]:
+    text = re.sub(r"[ \t]+", " ", text or "")
+    for label in ("repack size", "download size"):
+        match = re.search(rf"{label}\s*:?\s*([^\n\r]{{0,180}})", text, re.I)
+        if match and (size_match := SIZE_VALUE_RE.search(match.group(1))):
+            return _clean_size(size_match.group(0))
+    if fallback := SIZE_VALUE_RE.search(text):
+        return _clean_size(fallback.group(0))
+    return None
+
+
 def _excerpt_from_article(article) -> str:
     content = article.find("div", class_="entry-content")
     if not content:
@@ -238,8 +263,13 @@ def _excerpt_from_article(article) -> str:
     return _clean_excerpt(content.get_text(" ", strip=True))
 
 
+def _size_from_article(article) -> Optional[str]:
+    content = article.find("div", class_="entry-content") or article
+    return _size_from_text(content.get_text("\n", strip=True))
+
+
 def _enrich_game(game: Dict) -> Dict:
-    if game.get("image") and game.get("excerpt"):
+    if game.get("image") and game.get("excerpt") and game.get("size"):
         return game
     session = _get_session()
     resp = session.get(game["url"], timeout=15)
@@ -253,6 +283,8 @@ def _enrich_game(game: Dict) -> Dict:
         game["image"] = _image_from_article(article, game["url"])
     if not game.get("excerpt"):
         game["excerpt"] = _excerpt_from_article(article)
+    if not game.get("size"):
+        game["size"] = _size_from_article(article)
     game["categories"] = _article_categories(article)
     game["is_game"] = True
     return game
@@ -271,6 +303,49 @@ def _enrich_games(games: list[Dict]) -> list[Dict]:
                 # request fail because one detail page timed out.
                 enriched[idx] = games[idx]
     return [game for game in enriched if game and game.get("is_game", True)]
+
+
+def _clean_popular_title(value: str) -> str:
+    value = re.sub(r"\s+", " ", value or "").strip()
+    value = re.sub(r"^image:\s*", "", value, flags=re.I)
+    return value.strip()
+
+
+def _popular_games_from_page(soup: BeautifulSoup, base_url: str) -> list[Dict]:
+    content = soup.select_one(".entry-content") or soup.find("article") or soup
+    games: list[Dict] = []
+    seen: set[str] = set()
+
+    for link in content.select("a[href]"):
+        href = urljoin(base_url, link["href"])
+        host = (urlparse(href).hostname or "").lower()
+        if host not in {"fitgirl-repacks.site", "www.fitgirl-repacks.site"}:
+            continue
+        if href.rstrip("/") == POPULAR_REPACKS_URL.rstrip("/") or href in seen:
+            continue
+
+        img = link.find("img")
+        title = _clean_popular_title(
+            (img.get("alt") if img else "")
+            or (img.get("title") if img else "")
+            or link.get("title")
+            or link.get_text(" ", strip=True)
+        )
+        if not title or len(title) < 2:
+            continue
+
+        seen.add(href)
+        games.append({
+            "title": title,
+            "url": href,
+            "image": _image_from_img(img, href) if img else None,
+            "excerpt": "",
+            "size": None,
+            "categories": [],
+            "is_game": True,
+        })
+
+    return games
 
 
 def get_fuckingfast_downloads(game_url: str) -> List[Dict[str, Optional[str]]]:
@@ -354,20 +429,25 @@ def resolve_fuckingfast_download(ff_url: str) -> str:
     return resolve_fuckingfast_download_info(ff_url).url
 
 
-def search_fitgirl(query: str = "", page: int = 1) -> List[Dict]:
+def search_fitgirl(query: str = "", page: int = 1, limit: int = 24) -> List[Dict]:
     """
-    Search FitGirl repacks or browse the homepage.
-    Returns game-only dicts: {title, url, image, excerpt, categories}.
+    Search FitGirl repacks or browse the yearly popular repacks page.
+    Returns game-only dicts: {title, url, image, excerpt, size, categories}.
     """
     session = _get_session()
     query = query.strip()
+    page = max(1, int(page or 1))
+    limit = max(1, min(int(limit or 24), 60))
 
     if query:
-        url = f"https://fitgirl-repacks.site/?s={requests.utils.quote(query)}"
-    elif page > 1:
-        url = f"https://fitgirl-repacks.site/page/{page}/"
+        quoted = requests.utils.quote(query)
+        url = (
+            f"https://fitgirl-repacks.site/page/{page}/?s={quoted}"
+            if page > 1 else
+            f"https://fitgirl-repacks.site/?s={quoted}"
+        )
     else:
-        url = "https://fitgirl-repacks.site/"
+        url = POPULAR_REPACKS_URL
 
     resp = session.get(url, timeout=15)
     resp.raise_for_status()
@@ -375,7 +455,16 @@ def search_fitgirl(query: str = "", page: int = 1) -> List[Dict]:
     soup = BeautifulSoup(resp.text, "html.parser")
     games: List[Dict] = []
 
-    for article in soup.find_all("article", limit=32):
+    if not query:
+        popular_games = _popular_games_from_page(soup, url)
+        start = (page - 1) * limit
+        games = popular_games[start:start + limit]
+        games = _enrich_games(games)
+        for game in games:
+            game.pop("is_game", None)
+        return games
+
+    for article in soup.find_all("article", limit=max(32, limit * 2)):
         if not _is_game_article(article):
             continue
 
@@ -396,10 +485,11 @@ def search_fitgirl(query: str = "", page: int = 1) -> List[Dict]:
             "url": game_url,
             "image": _image_from_article(article, game_url),
             "excerpt": _excerpt_from_article(article),
+            "size": _size_from_article(article),
             "categories": _article_categories(article),
             "is_game": True,
         })
-        if len(games) >= 12:
+        if len(games) >= limit:
             break
 
     # Search result pages often omit thumbnails/excerpts, so hydrate those cards

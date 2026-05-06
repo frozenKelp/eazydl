@@ -11,7 +11,7 @@ Fixes vs. original:
 import os
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, create_engine
+from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, Text, create_engine, inspect, text
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -36,6 +36,11 @@ class LinkList(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, nullable=False)
+    source_url = Column(String, nullable=True)
+    image_url = Column(String, nullable=True)
+    description = Column(Text, nullable=True)
+    size = Column(String, nullable=True)
+    categories = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), default=_utcnow)
 
     downloads = relationship(
@@ -79,6 +84,7 @@ def get_db():
 def init_db() -> None:
     """Create tables and seed default settings on first run."""
     Base.metadata.create_all(bind=engine)
+    _migrate_link_list_metadata()
 
     db = SessionLocal()
     try:
@@ -93,6 +99,18 @@ def init_db() -> None:
             "download_path":        DOWNLOADS_DIR,
             "max_concurrent":       "3",
             "connections_per_file": "4",
+            "auto_start_new_games": "false",
+            "browse_items_per_page": "24",
+            "browse_card_size": "medium",
+            "browse_show_descriptions": "true",
+            "browse_open_links_new_tab": "true",
+            "library_card_size": "medium",
+            "library_default_detail": "false",
+            "library_show_file_urls": "true",
+            "confirm_delete": "true",
+            "interface_scale": "100",
+            "theme_density": "comfortable",
+            "reduce_motion": "false",
         }
         for key, value in defaults.items():
             if not db.query(Setting).filter(Setting.key == key).first():
@@ -101,3 +119,22 @@ def init_db() -> None:
         db.commit()
     finally:
         db.close()
+
+
+def _migrate_link_list_metadata() -> None:
+    """Add lightweight game-card metadata columns to existing SQLite DBs."""
+    existing = {col["name"] for col in inspect(engine).get_columns("link_lists")}
+    columns = {
+        "source_url": "VARCHAR",
+        "image_url": "VARCHAR",
+        "description": "TEXT",
+        "size": "VARCHAR",
+        "categories": "VARCHAR",
+    }
+    missing = [(name, ddl) for name, ddl in columns.items() if name not in existing]
+    if not missing:
+        return
+
+    with engine.begin() as conn:
+        for name, ddl in missing:
+            conn.execute(text(f"ALTER TABLE link_lists ADD COLUMN {name} {ddl}"))

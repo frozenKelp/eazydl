@@ -1,13 +1,16 @@
-/**
- * api.js — Shared utilities for EasyDL.
- * Loaded on every page. Provides:
- *   - API.req(url, method, body)  — fetch wrapper with toast on error
- *   - API.onProgress(cb)         — register a WebSocket progress callback
- *   - toast(msg, type)
- *   - fmtBytes(n), fmtSpeed(bps)
- *   - esc(s)                     — HTML-escape a string
- *   - updateNavStatus(ok, data)  — update aria2c badge + global speed
- */
+const SETTINGS_DEFAULTS = {
+  browse_items_per_page: '24',
+  browse_card_size: 'medium',
+  browse_show_descriptions: 'true',
+  browse_open_links_new_tab: 'true',
+  library_card_size: 'medium',
+  library_default_detail: 'false',
+  library_show_file_urls: 'true',
+  confirm_delete: 'true',
+  interface_scale: '100',
+  theme_density: 'comfortable',
+  reduce_motion: 'false',
+};
 
 const API = {
   _ws: null,
@@ -25,7 +28,7 @@ const API = {
       }
       return await res.json();
     } catch {
-      toast('Network error — is the server running?', 'err');
+      toast('Network error. Is the server running?', 'err');
       return null;
     }
   },
@@ -40,7 +43,9 @@ const API = {
         if (msg.type !== 'progress') return;
         updateNavStatus(msg.aria2_ok, msg.data || []);
         this._callbacks.forEach(cb => cb(msg));
-      } catch { /* malformed message */ }
+      } catch {
+        // Ignore malformed websocket frames.
+      }
     };
 
     this._ws.onclose = () => setTimeout(() => this.connectWS(), 3000);
@@ -52,22 +57,20 @@ const API = {
   },
 };
 
-/* ── Nav status ─────────────────────────────────────── */
 function updateNavStatus(aria2ok, downloads) {
-  const dot   = document.getElementById('nav-dot');
+  const dot = document.getElementById('nav-dot');
   const label = document.getElementById('nav-label');
   const speed = document.getElementById('nav-speed');
 
-  if (dot)   dot.className = `status-dot ${aria2ok ? 'ok' : 'err'}`;
+  if (dot) dot.className = `status-dot ${aria2ok ? 'ok' : 'err'}`;
   if (label) label.textContent = aria2ok ? 'aria2c' : 'offline';
 
   if (speed) {
     const total = downloads.reduce((s, d) => s + (d.speed || 0), 0);
-    speed.textContent = total > 0 ? '↓ ' + fmtSpeed(total) : '';
+    speed.textContent = total > 0 ? fmtSpeed(total) : '';
   }
 }
 
-/* ── Toast ──────────────────────────────────────────── */
 function toast(msg, type = 'info') {
   let c = document.getElementById('toast-container');
   if (!c) {
@@ -82,26 +85,45 @@ function toast(msg, type = 'info') {
   setTimeout(() => el.remove(), 4000);
 }
 
-/* ── Formatters ─────────────────────────────────────── */
-function fmtBytes(b) {
+function fmtBytes(b, empty = '0 B') {
   b = Number(b);
-  if (!isFinite(b) || b <= 0) return '0 B';
+  if (!isFinite(b) || b <= 0) return empty;
   const u = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.min(Math.floor(Math.log(b) / Math.log(1024)), u.length - 1);
   return (b / Math.pow(1024, i)).toFixed(1) + ' ' + u[i];
 }
 
-function fmtSpeed(bps) { return fmtBytes(bps) + '/s'; }
+function fmtSpeed(bps) {
+  return `${fmtBytes(bps)}/s`;
+}
 
 function esc(s) {
   return String(s ?? '')
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }
 
-/* ── Nav init (runs on every page) ─────────────────── */
-document.addEventListener('DOMContentLoaded', () => {
-  // Highlight active nav link
+function boolSetting(value, fallback = false) {
+  if (value === undefined || value === null || value === '') return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase());
+}
+
+async function getSettings() {
+  const settings = await API.req('/api/settings');
+  return { ...SETTINGS_DEFAULTS, ...(settings || {}) };
+}
+
+function applyInterfaceSettings(settings) {
+  const scale = Math.max(85, Math.min(125, Number(settings.interface_scale || 100)));
+  document.documentElement.style.fontSize = `${14 * (scale / 100)}px`;
+  document.body.dataset.density = settings.theme_density || 'comfortable';
+  document.body.dataset.reduceMotion = boolSetting(settings.reduce_motion) ? 'true' : 'false';
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
   const path = location.pathname;
   document.querySelectorAll('.nav-link').forEach(a => {
     const href = a.getAttribute('href');
@@ -112,7 +134,9 @@ document.addEventListener('DOMContentLoaded', () => {
     a.classList.toggle('active', active);
   });
 
-  // Start WebSocket + periodic aria2c poll
+  const settings = await getSettings();
+  applyInterfaceSettings(settings);
+
   API.connectWS();
   const poll = async () => {
     const s = await API.req('/api/status');

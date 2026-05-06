@@ -102,6 +102,10 @@ class GameAdd(BaseModel):
     """Used by the Browse page: create a game list and scrape its links in one shot."""
     title: str
     game_url: str
+    image_url: Optional[str] = None
+    description: Optional[str] = None
+    size: Optional[str] = None
+    categories: Optional[List[str]] = None
 
 
 # ── Page routes ────────────────────────────────────────────────────────────────
@@ -205,6 +209,11 @@ def api_get_lists(db: Session = Depends(get_db)):
         result.append({
             "id":               lst.id,
             "name":             lst.name,
+            "source_url":       lst.source_url or "",
+            "image_url":        lst.image_url or "",
+            "description":      lst.description or "",
+            "size":             lst.size or "",
+            "categories":       [c for c in (lst.categories or "").split("|") if c],
             "created_at":       lst.created_at.isoformat() if lst.created_at else None,
             "count":            len(dls),
             "completed":        completed,
@@ -304,6 +313,18 @@ def api_add_game(data: GameAdd, db: Session = Depends(get_db)):
         db.add(lst)
         db.commit()
         db.refresh(lst)
+
+    categories = [c.strip() for c in (data.categories or []) if c and c.strip()]
+    if data.game_url and not lst.source_url:
+        lst.source_url = data.game_url.strip()
+    if data.image_url and not lst.image_url:
+        lst.image_url = data.image_url.strip()
+    if data.description and not lst.description:
+        lst.description = data.description.strip()[:2000]
+    if data.size and not lst.size:
+        lst.size = data.size.strip()[:80]
+    if categories and not lst.categories:
+        lst.categories = "|".join(categories[:12])
 
     # Scrape download links and keep FitGirl's human filenames when present.
     try:
@@ -525,10 +546,16 @@ def api_scrape_links(data: ScrapeRequest, db: Session = Depends(get_db)):
 
 
 @app.get("/api/scrape/search")
-async def api_scrape_search(query: str = "", page: int = 1):
+async def api_scrape_search(query: str = "", page: int = 1, limit: int = 24):
     try:
-        games = await asyncio.to_thread(search_fitgirl, query, page)
-        return {"games": games}
+        limit = max(1, min(int(limit or 24), 60))
+        games = await asyncio.to_thread(search_fitgirl, query, page, limit)
+        return {
+            "games": games,
+            "page": max(1, int(page or 1)),
+            "limit": limit,
+            "source": "search" if query.strip() else "popular-year",
+        }
     except Exception as exc:
         raise HTTPException(400, str(exc))
 

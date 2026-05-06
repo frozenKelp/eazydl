@@ -1,10 +1,17 @@
 async function loadSettings() {
-  const settings = await API.req('/api/settings');
-  if (!settings) return;
-  for (const [key, value] of Object.entries(settings)) {
-    const field = document.getElementById(key);
-    if (field) field.value = value;
-  }
+  const settings = await getSettings();
+  applyInterfaceSettings(settings);
+
+  document.querySelectorAll('[name]').forEach(field => {
+    const value = settings[field.name];
+    if (field.type === 'checkbox') {
+      field.checked = boolSetting(value);
+    } else if (value !== undefined) {
+      field.value = value;
+    }
+  });
+
+  syncScaleLabel();
   await loadRuntime();
 }
 
@@ -24,12 +31,24 @@ async function loadRuntime() {
     <div class="info-row"><span class="info-key">stopped</span><span class="info-val">${status.num_stopped || 0}</span></div>`;
 }
 
+function collectSettings(form) {
+  const data = {};
+  [...form.elements].forEach(el => {
+    if (!el.name) return;
+    if (el.type === 'checkbox') {
+      data[el.name] = el.checked ? 'true' : 'false';
+    } else if (el.type === 'number' || el.type === 'range') {
+      data[el.name] = Number(el.value || 0);
+    } else {
+      data[el.name] = el.value;
+    }
+  });
+  return data;
+}
+
 async function saveSettings(e) {
   e.preventDefault();
-  const form = e.currentTarget;
-  const data = Object.fromEntries(new FormData(form).entries());
-  data.max_concurrent = Number(data.max_concurrent || 1);
-  data.connections_per_file = Number(data.connections_per_file || 1);
+  const data = collectSettings(e.currentTarget);
   const ok = await API.req('/api/settings', 'PUT', data);
   if (ok) {
     toast('Settings saved', 'ok');
@@ -37,9 +56,29 @@ async function saveSettings(e) {
   }
 }
 
+function showPanel(id) {
+  document.querySelectorAll('[data-settings-tab]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.settingsTab === id);
+  });
+  document.querySelectorAll('[data-settings-panel]').forEach(panel => {
+    panel.hidden = panel.dataset.settingsPanel !== id;
+  });
+}
+
+function syncScaleLabel() {
+  const scale = document.getElementById('interface_scale');
+  const label = document.getElementById('scale-value');
+  if (scale && label) label.textContent = `${scale.value}%`;
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('settings-form').addEventListener('submit', saveSettings);
+  document.querySelectorAll('[data-settings-tab]').forEach(btn => {
+    btn.addEventListener('click', () => showPanel(btn.dataset.settingsTab));
+  });
+  document.getElementById('interface_scale').addEventListener('input', syncScaleLabel);
   API.onProgress(loadRuntime);
+  showPanel('downloads');
   loadSettings();
   setInterval(loadRuntime, 5000);
 });

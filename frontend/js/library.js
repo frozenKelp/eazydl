@@ -1,41 +1,63 @@
 let lists = [];
-const openLists = new Set();
-const downloadsByList = new Map();
+let downloadsByList = new Map();
 let liveById = new Map();
+let selectedListId = null;
+let librarySettings = { ...SETTINGS_DEFAULTS };
 
 const statusOrder = ['downloading', 'queued', 'paused', 'failed', 'pending', 'completed'];
+const runningStatuses = new Set(['downloading', 'queued']);
+const startableStatuses = new Set(['pending', 'failed']);
 
 function mergedDownload(dl) {
   const live = liveById.get(dl.id) || {};
   return { ...dl, ...live, status: live.status || dl.status };
 }
 
+function proxiedImage(url) {
+  if (!url) return '';
+  return `/api/image?url=${encodeURIComponent(url)}`;
+}
+
+async function loadLibrarySettings() {
+  librarySettings = await getSettings();
+  applyInterfaceSettings(librarySettings);
+}
+
 async function loadLibrary() {
   const root = document.getElementById('library');
-  root.innerHTML = '<div class="loading"><span class="spinner"></span> Loading library…</div>';
+  root.innerHTML = '<div class="loading"><span class="spinner"></span> Loading library...</div>';
   const data = await API.req('/api/lists');
   if (!data) return;
   lists = data;
+  downloadsByList = new Map();
+
   await Promise.all(lists.map(async (lst) => {
     const dls = await API.req(`/api/lists/${lst.id}/downloads`);
     if (dls) downloadsByList.set(lst.id, dls);
   }));
+
+  if (selectedListId && !lists.some(l => l.id === selectedListId)) selectedListId = null;
+  if (!selectedListId && boolSetting(librarySettings.library_default_detail) && lists.length) {
+    selectedListId = lists[0].id;
+  }
   renderLibrary();
 }
 
 function renderStats() {
   const stats = document.getElementById('library-stats');
-  const gameCount = lists.length;
   const files = [...downloadsByList.values()].flat().map(mergedDownload);
-  const running = files.filter(d => ['downloading', 'queued'].includes(d.status)).length;
+  const running = files.filter(d => runningStatuses.has(d.status)).length;
+  const paused = files.filter(d => d.status === 'paused').length;
   const done = files.filter(d => d.status === 'completed').length;
   const totalBytes = files.reduce((s, d) => s + (d.total_bytes || 0), 0);
+
   stats.innerHTML = `
-    <div class="stat-card"><strong>${gameCount}</strong><span>Games</span></div>
+    <div class="stat-card"><strong>${lists.length}</strong><span>Games</span></div>
     <div class="stat-card"><strong>${files.length}</strong><span>Files</span></div>
-    <div class="stat-card"><strong>${done}</strong><span>Completed</span></div>
+    <div class="stat-card"><strong>${done}</strong><span>Done</span></div>
     <div class="stat-card"><strong>${running}</strong><span>Running</span></div>
-    <div class="stat-card"><strong>${fmtBytes(totalBytes)}</strong><span>Known size</span></div>`;
+    <div class="stat-card"><strong>${paused}</strong><span>Paused</span></div>
+    <div class="stat-card"><strong>${fmtBytes(totalBytes, 'Unknown')}</strong><span>Known size</span></div>`;
 }
 
 function gameProgress(downloads) {
@@ -48,126 +70,262 @@ function gameProgress(downloads) {
   return { pct, downloaded, total, completed };
 }
 
+function gameAction(downloads) {
+  const merged = downloads.map(mergedDownload);
+  if (merged.some(d => runningStatuses.has(d.status))) return { label: 'Pause', disabled: false };
+  if (merged.some(d => d.status === 'paused' || startableStatuses.has(d.status))) return { label: 'Start', disabled: false };
+  return { label: 'Done', disabled: true };
+}
+
 function renderLibrary() {
   renderStats();
   const root = document.getElementById('library');
   if (!lists.length) {
-    root.innerHTML = `<div class="empty-state"><div class="empty-icon">☰</div><h3>No games in your library</h3><p>Go to <a href="/browse">Browse</a>, search for a game, and press Add to Library.</p></div>`;
+    root.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">Library</div>
+        <h3>No games in your library</h3>
+        <p>Add a repack from Browse to see it here.</p>
+      </div>`;
     return;
   }
-  root.innerHTML = lists.map(renderGameCard).join('');
+
+  if (selectedListId) {
+    const selected = lists.find(l => l.id === selectedListId);
+    if (selected) {
+      root.innerHTML = renderDetail(selected);
+      return;
+    }
+  }
+
+  const sizeClass = `card-size-${librarySettings.library_card_size || 'medium'}`;
+  root.innerHTML = `<div class="library-grid ${sizeClass}">${lists.map(renderLibraryCard).join('')}</div>`;
 }
 
-function renderGameCard(lst) {
-  const downloads = (downloadsByList.get(lst.id) || []).map(mergedDownload)
-    .sort((a, b) => statusOrder.indexOf(a.status) - statusOrder.indexOf(b.status));
+function renderLibraryCard(lst) {
+  const downloads = (downloadsByList.get(lst.id) || []).map(mergedDownload);
   const p = gameProgress(downloads);
-  const isOpen = openLists.has(lst.id);
-  return `<article class="game-card" data-list-id="${lst.id}" data-open="${isOpen}">
-    <div class="game-header" role="button" tabindex="0" data-action="toggle">
-      <span class="game-toggle">▶</span>
-      <h2 class="game-title" title="${esc(lst.name)}">${esc(lst.name)}</h2>
-      <div class="game-meta">
+  const action = gameAction(downloads);
+  const image = proxiedImage(lst.image_url);
+  const total = p.total ? fmtBytes(p.total) : (lst.size || 'Unknown size');
+
+  return `<article class="library-card" data-action="open-list" data-list-id="${lst.id}" tabindex="0">
+    <div class="library-cover-wrap">
+      ${image
+        ? `<img class="library-cover" src="${esc(image)}" alt="" loading="lazy" referrerpolicy="no-referrer">`
+        : `<div class="library-cover-placeholder">${esc(initials(lst.name))}</div>`}
+      <span class="size-chip">${esc(total)}</span>
+    </div>
+    <div class="library-card-body">
+      <h2 class="library-card-title" title="${esc(lst.name)}">${esc(lst.name)}</h2>
+      <div class="library-card-meta">
         <span>${p.completed}/${downloads.length} files</span>
-        <span>${fmtBytes(p.downloaded)} / ${fmtBytes(p.total)}</span>
+        <span>${p.pct.toFixed(0)}%</span>
       </div>
-      <div class="game-actions">
-        <button class="btn btn-primary btn-xs" data-action="start-game" type="button">Start</button>
-        <button class="btn btn-ghost btn-xs" data-action="pause-game" type="button">Pause</button>
-        <button class="btn btn-ghost btn-xs" data-action="stop-game" type="button">Stop</button>
-        <button class="btn btn-danger btn-xs" data-action="delete-game" type="button">Delete</button>
-      </div>
-    </div>
-    <div class="game-progress-wrap">
       <div class="progress-track"><div class="progress-fill" style="width:${Math.min(100, p.pct).toFixed(1)}%"></div></div>
-      <div class="game-progress-labels"><span>${p.pct.toFixed(1)}%</span><span>${downloads.length || 'No'} links</span></div>
-    </div>
-    <div class="game-body ${isOpen ? 'open' : ''}">
-      ${downloads.length ? downloads.map(renderFileRow).join('') : '<div class="empty-state"><p>No links found for this game.</p></div>'}
+      <div class="library-card-actions">
+        <button class="btn btn-primary btn-sm" data-action="toggle-game" type="button" ${action.disabled ? 'disabled' : ''}>${action.label}</button>
+        <button class="btn btn-ghost btn-sm" data-action="open-list" type="button">Details</button>
+      </div>
     </div>
   </article>`;
+}
+
+function renderDetail(lst) {
+  const downloads = (downloadsByList.get(lst.id) || [])
+    .map(mergedDownload)
+    .sort((a, b) => statusOrder.indexOf(a.status) - statusOrder.indexOf(b.status));
+  const p = gameProgress(downloads);
+  const action = gameAction(downloads);
+  const image = proxiedImage(lst.image_url);
+  const cats = (lst.categories || []).slice(0, 6);
+  const total = p.total ? fmtBytes(p.total) : (lst.size || 'Unknown size');
+  const description = lst.description || 'No description saved yet.';
+
+  return `<section class="library-detail" data-list-id="${lst.id}">
+    <aside class="detail-side">
+      <button class="back-link" data-action="back" type="button">Back</button>
+      <div class="detail-cover-wrap">
+        ${image
+          ? `<img class="detail-cover" src="${esc(image)}" alt="" referrerpolicy="no-referrer">`
+          : `<div class="detail-cover-placeholder">${esc(initials(lst.name))}</div>`}
+      </div>
+      <h2 class="detail-title">${esc(lst.name)}</h2>
+      <div class="detail-meta">
+        <span>${esc(total)}</span>
+        <span>${downloads.length} files</span>
+        <span>${p.pct.toFixed(0)}%</span>
+      </div>
+      <div class="detail-tags">${cats.map(c => `<span>${esc(c)}</span>`).join('')}</div>
+      <p class="detail-description">${esc(description)}</p>
+      <button class="btn btn-primary btn-fw" data-action="toggle-game" type="button" ${action.disabled ? 'disabled' : ''}>${action.label}</button>
+      ${lst.source_url ? `<a class="btn btn-ghost btn-fw" href="${esc(lst.source_url)}" target="_blank" rel="noopener">FitGirl page</a>` : ''}
+      <button class="btn btn-danger btn-fw" data-action="delete-game" type="button">Delete</button>
+    </aside>
+    <div class="detail-main">
+      <div class="detail-toolbar">
+        <div>
+          <h3>Links</h3>
+          <span>${p.completed}/${downloads.length} complete</span>
+        </div>
+        <button class="btn btn-ghost btn-sm" data-action="refresh" type="button">Refresh</button>
+      </div>
+      <div class="detail-progress">
+        <div class="progress-track"><div class="progress-fill" style="width:${Math.min(100, p.pct).toFixed(1)}%"></div></div>
+        <div class="game-progress-labels"><span>${fmtBytes(p.downloaded)}</span><span>${total}</span></div>
+      </div>
+      <div class="file-list">
+        ${downloads.length ? downloads.map(renderFileRow).join('') : '<div class="empty-state"><p>No links found for this game.</p></div>'}
+      </div>
+    </div>
+  </section>`;
 }
 
 function renderFileRow(dl) {
   const pct = dl.total_bytes ? (dl.bytes_downloaded || 0) / dl.total_bytes * 100 : (dl.progress || 0);
   const fillClass = dl.status === 'completed' ? 'done' : dl.status === 'failed' ? 'error' : dl.status === 'paused' ? 'paused' : '';
   const name = dl.filename || dl.url.split('/').pop() || `Download #${dl.id}`;
-  const canResume = dl.status === 'paused';
+  const actionLabel = runningStatuses.has(dl.status) ? 'Pause' : dl.status === 'completed' ? 'Done' : 'Start';
+  const disabled = dl.status === 'completed' ? 'disabled' : '';
+  const showUrl = boolSetting(librarySettings.library_show_file_urls, true);
+
   return `<div class="file-row" data-dl-id="${dl.id}">
     <span class="badge badge-${esc(dl.status)}">${esc(dl.status)}</span>
-    <div class="file-main"><div class="file-name" title="${esc(name)}">${esc(name)}</div><div class="file-url" title="${esc(dl.url)}">${esc(dl.url)}</div></div>
+    <div class="file-main">
+      <div class="file-name" title="${esc(name)}">${esc(name)}</div>
+      ${showUrl ? `<a class="file-url" href="${esc(dl.url)}" target="_blank" rel="noopener" title="${esc(dl.url)}">${esc(dl.url)}</a>` : ''}
+    </div>
     <div class="file-bar"><div class="progress-track"><div class="progress-fill ${fillClass}" style="width:${Math.min(100, pct).toFixed(1)}%"></div></div></div>
-    <div class="file-details"><span class="file-size">${fmtBytes(dl.bytes_downloaded)} / ${fmtBytes(dl.total_bytes)}</span><span class="file-speed">${dl.speed ? fmtSpeed(dl.speed) : '—'}</span></div>
+    <div class="file-details">
+      <span>${fmtBytes(dl.bytes_downloaded)} / ${fmtBytes(dl.total_bytes, 'Unknown')}</span>
+      <span>${dl.speed ? fmtSpeed(dl.speed) : '-'}</span>
+    </div>
     <div class="file-actions">
-      <button class="btn btn-primary btn-xs" data-action="${canResume ? 'resume-file' : 'start-file'}" type="button">${canResume ? 'Resume' : 'Start'}</button>
-      <button class="btn btn-ghost btn-xs" data-action="pause-file" type="button">Pause</button>
-      <button class="btn btn-ghost btn-xs" data-action="stop-file" type="button">Stop</button>
-      <button class="btn btn-danger btn-xs" data-action="delete-file" type="button">✕</button>
+      <button class="btn btn-primary btn-xs" data-action="toggle-file" type="button" ${disabled}>${actionLabel}</button>
+      <button class="btn btn-danger btn-xs" data-action="delete-file" type="button">Delete</button>
     </div>
     ${dl.error_message ? `<div class="file-error">${esc(dl.error_message)}</div>` : ''}
   </div>`;
 }
 
-async function operateDownloads(ids, op) {
-  ids = ids.filter(Boolean);
-  if (!ids.length) {
-    toast('No matching files for that action', 'info');
-    return;
-  }
-  for (const id of ids) await API.req(`/api/downloads/${id}/${op}`, 'POST');
-  toast(`${op[0].toUpperCase() + op.slice(1)} sent for ${ids.length} file(s)`, 'ok');
-  setTimeout(loadLibrary, 500);
+function initials(name) {
+  return String(name || 'ED').split(/\s+/).slice(0, 2).map(s => s[0] || '').join('').toUpperCase();
 }
 
-async function handleClick(e) {
-  const btn = e.target.closest('[data-action]');
-  if (!btn) return;
-  const action = btn.dataset.action;
-  const card = btn.closest('.game-card');
-  const row = btn.closest('.file-row');
-  const listId = card ? Number(card.dataset.listId) : null;
-  if (action === 'toggle') {
-    if (e.target.closest('button')) return;
-    openLists.has(listId) ? openLists.delete(listId) : openLists.add(listId);
-    renderLibrary();
-    return;
+function filesFor(listId) {
+  return (downloadsByList.get(listId) || []).map(mergedDownload);
+}
+
+async function startOrResume(dl) {
+  if (dl.status === 'paused') return API.req(`/api/downloads/${dl.id}/resume`, 'POST');
+  if (startableStatuses.has(dl.status)) return API.req(`/api/downloads/${dl.id}/start`, 'POST');
+  return null;
+}
+
+async function toggleDownload(dl) {
+  if (runningStatuses.has(dl.status)) {
+    return API.req(`/api/downloads/${dl.id}/pause`, 'POST');
   }
-  e.stopPropagation();
-  const files = downloadsByList.get(listId) || [];
-  const ids = row ? [Number(row.dataset.dlId)] : files.map(d => d.id);
-  if (action === 'start-game') {
-    const merged = files.map(mergedDownload);
-    const paused = merged.filter(d => d.status === 'paused').map(d => d.id);
-    const startable = merged.filter(d => ['pending', 'failed'].includes(d.status)).map(d => d.id);
-    if (!paused.length && !startable.length) return toast('No files need starting', 'info');
-    for (const id of paused) await API.req(`/api/downloads/${id}/resume`, 'POST');
-    for (const id of startable) await API.req(`/api/downloads/${id}/start`, 'POST');
-    toast(`Start sent for ${paused.length + startable.length} file(s)`, 'ok');
+  return startOrResume(dl);
+}
+
+async function toggleGame(listId) {
+  const files = filesFor(listId);
+  const running = files.filter(d => runningStatuses.has(d.status));
+  if (running.length) {
+    for (const dl of running) await API.req(`/api/downloads/${dl.id}/pause`, 'POST');
+    toast(`Paused ${running.length} file(s)`, 'ok');
     setTimeout(loadLibrary, 500);
     return;
   }
-  if (action === 'pause-game') return operateDownloads(ids.filter(Boolean), 'pause');
-  if (action === 'stop-game') return operateDownloads(ids.filter(Boolean), 'stop');
-  if (action === 'delete-game') {
-    if (!confirm('Delete this game and all its links from the library?')) return;
-    const ok = await API.req(`/api/lists/${listId}`, 'DELETE');
-    if (ok) { toast('Game removed', 'ok'); await loadLibrary(); }
+
+  const actionable = files.filter(d => d.status === 'paused' || startableStatuses.has(d.status));
+  if (!actionable.length) {
+    toast('No files need starting', 'info');
     return;
   }
-  if (action === 'start-file') return operateDownloads(ids, 'start');
-  if (action === 'resume-file') return operateDownloads(ids, 'resume');
-  if (action === 'pause-file') return operateDownloads(ids, 'pause');
-  if (action === 'stop-file') return operateDownloads(ids, 'stop');
-  if (action === 'delete-file') {
-    if (!confirm('Delete this link?')) return;
-    const ok = await API.req(`/api/downloads/${ids[0]}`, 'DELETE');
-    if (ok) { toast('Link removed', 'ok'); await loadLibrary(); }
+  for (const dl of actionable) await startOrResume(dl);
+  toast(`Started ${actionable.length} file(s)`, 'ok');
+  setTimeout(loadLibrary, 500);
+}
+
+function confirmDelete(message) {
+  return !boolSetting(librarySettings.confirm_delete, true) || confirm(message);
+}
+
+async function handleAction(e) {
+  const el = e.target.closest('[data-action]');
+  if (!el) return;
+  const action = el.dataset.action;
+  const listEl = el.closest('[data-list-id]');
+  const listId = listEl ? Number(listEl.dataset.listId) : selectedListId;
+  const row = el.closest('.file-row');
+
+  if (action === 'open-list') {
+    selectedListId = listId;
+    renderLibrary();
+    return;
+  }
+
+  e.stopPropagation();
+
+  if (action === 'back') {
+    selectedListId = null;
+    renderLibrary();
+    return;
+  }
+  if (action === 'refresh') {
+    await loadLibrary();
+    return;
+  }
+  if (action === 'toggle-game') {
+    await toggleGame(listId);
+    return;
+  }
+  if (action === 'delete-game') {
+    if (!confirmDelete('Delete this game and all of its links?')) return;
+    const ok = await API.req(`/api/lists/${listId}`, 'DELETE');
+    if (ok) {
+      selectedListId = null;
+      toast('Game removed', 'ok');
+      await loadLibrary();
+    }
+    return;
+  }
+  if (action === 'toggle-file' && row) {
+    const id = Number(row.dataset.dlId);
+    const dl = filesFor(listId).find(d => d.id === id);
+    if (!dl) return;
+    const ok = await toggleDownload(dl);
+    if (ok) {
+      toast(`${runningStatuses.has(dl.status) ? 'Paused' : 'Started'} 1 file`, 'ok');
+      setTimeout(loadLibrary, 500);
+    }
+    return;
+  }
+  if (action === 'delete-file' && row) {
+    const id = Number(row.dataset.dlId);
+    if (!confirmDelete('Delete this link?')) return;
+    const ok = await API.req(`/api/downloads/${id}`, 'DELETE');
+    if (ok) {
+      toast('Link removed', 'ok');
+      await loadLibrary();
+    }
   }
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  await loadLibrarySettings();
   document.getElementById('refresh-btn').addEventListener('click', loadLibrary);
-  document.getElementById('library').addEventListener('click', handleClick);
+  document.getElementById('library').addEventListener('click', handleAction);
+  document.getElementById('library').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const card = e.target.closest('.library-card');
+    if (!card) return;
+    e.preventDefault();
+    selectedListId = Number(card.dataset.listId);
+    renderLibrary();
+  });
   API.onProgress((msg) => {
     liveById = new Map((msg.data || []).map(d => [d.id, d]));
     if (lists.length) renderLibrary();
