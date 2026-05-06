@@ -34,7 +34,7 @@ body{
   font-size:13px;
 }
 
-/* ─── HEADER ─────────────────────────────────────────────────── */
+/* ─── HEADER ────────────────────────────────────────────────────── */
 #hdr{
   height:46px;background:var(--bg2);border-bottom:1px solid var(--border);
   display:flex;align-items:center;padding:0 14px;gap:20px;flex-shrink:0;
@@ -51,13 +51,11 @@ body{
   display:flex;align-items:center;gap:5px;
   font-size:10px;letter-spacing:1px;color:var(--muted);flex-shrink:0;
 }
-.dot{width:7px;height:7px;border-radius:50%;background:var(--muted);flex-shrink:0}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--muted);flex-shrink:0;transition:background .4s}
 .dot.ok{background:var(--green);box-shadow:0 0 6px var(--green)}
 .dot.err{background:var(--red);box-shadow:0 0 6px var(--red)}
 
-#global-speed{
-  font-size:11px;color:var(--orange);letter-spacing:1px;min-width:100px;
-}
+#global-speed{font-size:11px;color:var(--orange);letter-spacing:1px;min-width:100px}
 
 .spacer{flex:1}
 
@@ -69,18 +67,15 @@ body{
 .tab-btn:hover{color:var(--white);border-color:var(--border2)}
 .tab-btn.active{color:var(--cyan);border-color:var(--cyan);background:var(--cyan2)}
 
-/* ─── LAYOUT ─────────────────────────────────────────────────── */
+/* ─── LAYOUT ─────────────────────────────────────────────────────── */
 #layout{display:flex;flex:1;overflow:hidden}
 
-/* ─── SIDEBAR ────────────────────────────────────────────────── */
+/* ─── SIDEBAR ────────────────────────────────────────────────────── */
 #sb{
   width:210px;background:var(--bg2);border-right:1px solid var(--border);
   display:flex;flex-direction:column;flex-shrink:0;overflow:hidden;
 }
-.sb-head{
-  padding:10px 12px;border-bottom:1px solid var(--border);
-  font-size:9px;color:var(--muted);letter-spacing:2px;
-}
+.sb-head{padding:10px 12px;border-bottom:1px solid var(--border);font-size:9px;color:var(--muted);letter-spacing:2px}
 #list-wrap{flex:1;overflow-y:auto;padding:6px}
 
 .lst-item{
@@ -92,24 +87,17 @@ body{
 .lst-item:hover{background:var(--bg3);border-color:var(--border);color:var(--white)}
 .lst-item.active{background:var(--cyan2);border-color:var(--cyan);color:var(--cyan)}
 .lst-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.lst-count{
-  font-size:9px;padding:1px 5px;background:var(--bg3);
-  border:1px solid var(--border);color:var(--muted);flex-shrink:0;
-}
+.lst-count{font-size:9px;padding:1px 5px;background:var(--bg3);border:1px solid var(--border);color:var(--muted);flex-shrink:0}
 .lst-del{
   display:none;background:none;border:none;
   color:var(--red);cursor:pointer;font-size:11px;padding:0 1px;flex-shrink:0;
   font-family:inherit;
 }
 .lst-item:hover .lst-del{display:block}
-
 #sb-foot{padding:8px;border-top:1px solid var(--border)}
 
-/* ─── BUTTONS ────────────────────────────────────────────────── */
-.btn{
-  padding:6px 12px;font-family:inherit;font-size:11px;
-  cursor:pointer;letter-spacing:1px;transition:all .15s;border:1px solid;
-}
+/* ─── BUTTONS ────────────────────────────────────────────────────── */
+.btn{padding:6px 12px;font-family:inherit;font-size:11px;cursor:pointer;letter-spacing:1px;transition:all .15s;border:1px solid}
 .btn-p{background:var(--cyan2);border-color:var(--cyan);color:var(--cyan)}
 .btn-p:hover{background:var(--cyan);color:var(--bg)}
 .btn-s{background:var(--bg3);border-color:var(--border2);color:var(--text)}
@@ -121,23 +109,17 @@ body{
 .btn-fw{width:100%}
 .btn:disabled{opacity:.35;cursor:default;pointer-events:none}
 
-/* ─── MAIN ───────────────────────────────────────────────────── */
+/* ─── MAIN ───────────────────────────────────────────────────────── */
 #main{flex:1;overflow:hidden;display:flex;flex-direction:column}
 .tab-panel{display:none;flex-direction:column;flex:1;overflow:hidden}
 .tab-panel.active{display:flex}
 
-/* Panel header */
 .p-head{
   padding:10px 14px;border-bottom:1px solid var(--border);
-  background:var(--bg2);display:flex;align-items:center;
-  gap:10px;flex-shrink:0;
+  background:var(--bg2);display:flex;align-items:center;gap:10px;flex-shrink:0;
 }
-.p-title{
-  font-size:13px;font-weight:600;color:var(--white);
-  letter-spacing:2px;flex:1;
-}
+.p-title{font-size:13px;font-weight:600;color:var(--white);letter-spacing:2px;flex:1}
 
-/* Stats bar */
 .stats-bar{
   display:flex;gap:14px;padding:5px 14px;
   background:var(--bg3);border-bottom:1px solid var(--border);
@@ -146,7 +128,7 @@ body{
 .stat{display:flex;gap:5px;align-items:center}
 .stat-v{color:var(--cyan)}
 
-/* ─── DOWNLOAD LIST ──────────────────────────────────────────── */
+/* ─── DOWNLOAD LIST ──────────────────────────────────────────────── */
 #dl-scroll{flex:1;overflow-y:auto;padding:10px}
 
 .dl-card{
@@ -158,12 +140,10 @@ body{
 .dl-card[data-status="completed"]{border-left:2px solid var(--green)}
 .dl-card[data-status="failed"]{border-left:2px solid var(--red)}
 .dl-card[data-status="paused"]{border-left:2px solid var(--yellow)}
+.dl-card[data-status="queued"]{border-left:2px solid var(--yellow)}
 
 .dl-r1{display:flex;align-items:center;gap:8px;margin-bottom:8px}
-.dl-fname{
-  flex:1;font-size:12px;color:var(--white);
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-}
+.dl-fname{flex:1;font-size:12px;color:var(--white);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dl-gid{font-size:9px;color:var(--muted);flex-shrink:0;letter-spacing:1px}
 
 .badge{font-size:9px;padding:2px 7px;border:1px solid;letter-spacing:1px;flex-shrink:0}
@@ -177,13 +157,10 @@ body{
 .dl-actions{display:flex;gap:3px;flex-shrink:0}
 
 .bar-bg{height:2px;background:var(--bg4);margin-bottom:6px}
-.bar-fill{
-  height:100%;
-  background:linear-gradient(90deg,var(--cyan),var(--green));
-  transition:width .6s linear;
-}
+.bar-fill{height:100%;background:linear-gradient(90deg,var(--cyan),var(--green));transition:width .6s linear}
 .bar-fill.complete{background:var(--green)}
 .bar-fill.failed{background:var(--red)}
+.bar-fill.paused{background:var(--yellow)}
 
 .dl-r2{display:flex;gap:12px;font-size:9px;color:var(--muted);letter-spacing:.5px}
 .dl-url{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -191,101 +168,59 @@ body{
 .dl-speed{color:var(--orange);flex-shrink:0;min-width:80px;text-align:right}
 .dl-size{flex-shrink:0}
 .dl-pct{flex-shrink:0;min-width:38px;text-align:right}
-.dl-err{font-size:9px;color:var(--red);margin-top:4px}
+.dl-err{font-size:9px;color:var(--red);margin-top:4px;word-break:break-word}
 
-/* Empty states */
-.empty{
-  flex:1;display:flex;flex-direction:column;
-  align-items:center;justify-content:center;
-  color:var(--muted);gap:10px;
-}
+.empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--muted);gap:10px}
 .empty-ico{font-size:36px;opacity:.3}
 .empty-ttl{font-size:13px;color:var(--text);letter-spacing:2px}
 
-/* ─── BROWSE ─────────────────────────────────────────────────── */
+/* ─── BROWSE ──────────────────────────────────────────────────────── */
 #browse-scroll{flex:1;overflow-y:auto;padding:14px}
 .search-row{display:flex;gap:8px;margin-bottom:14px}
-.inp{
-  padding:7px 10px;background:var(--bg2);border:1px solid var(--border2);
-  color:var(--white);font-family:inherit;font-size:12px;outline:none;
-}
+.inp{padding:7px 10px;background:var(--bg2);border:1px solid var(--border2);color:var(--white);font-family:inherit;font-size:12px;outline:none}
 .inp:focus{border-color:var(--cyan)}
 .inp::placeholder{color:var(--muted)}
 .inp-grow{flex:1}
 
-.games-grid{
-  display:grid;
-  grid-template-columns:repeat(auto-fill,minmax(180px,1fr));
-  gap:10px;
-}
-.game-card{
-  background:var(--bg2);border:1px solid var(--border);
-  overflow:hidden;transition:border-color .15s;
-}
+.games-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}
+.game-card{background:var(--bg2);border:1px solid var(--border);overflow:hidden;transition:border-color .15s}
 .game-card:hover{border-color:var(--border2)}
-.game-thumb{
-  width:100%;height:110px;object-fit:cover;
-  background:var(--bg3);display:block;
-}
+.game-thumb{width:100%;height:110px;object-fit:cover;background:var(--bg3);display:block}
 .game-body{padding:9px}
-.game-title{
-  font-size:11px;color:var(--white);margin-bottom:7px;
-  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
-  overflow:hidden;line-height:1.5;
-}
+.game-title{font-size:11px;color:var(--white);margin-bottom:7px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.5}
 .game-add{display:flex;gap:5px;align-items:center}
-.sel{
-  flex:1;padding:4px 5px;background:var(--bg3);border:1px solid var(--border);
-  color:var(--text);font-family:inherit;font-size:10px;outline:none;
-}
+.sel{flex:1;padding:4px 5px;background:var(--bg3);border:1px solid var(--border);color:var(--text);font-family:inherit;font-size:10px;outline:none}
 
-/* ─── SETTINGS ───────────────────────────────────────────────── */
+/* ─── SETTINGS ────────────────────────────────────────────────────── */
 #set-scroll{flex:1;overflow-y:auto;padding:20px;max-width:560px}
 .s-group{margin-bottom:22px}
-.s-group-title{
-  font-size:10px;color:var(--cyan);letter-spacing:2px;font-weight:600;
-  margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border);
-}
+.s-group-title{font-size:10px;color:var(--cyan);letter-spacing:2px;font-weight:600;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border)}
 .s-row{display:flex;align-items:center;gap:12px;margin-bottom:10px}
 .s-lbl{font-size:11px;color:var(--text);width:190px;flex-shrink:0}
 .s-desc{font-size:9px;color:var(--muted);margin-top:3px;letter-spacing:.5px}
-.inp-s{padding:6px 9px;background:var(--bg2);border:1px solid var(--border2);
-  color:var(--white);font-family:inherit;font-size:12px;outline:none;flex:1}
+.inp-s{padding:6px 9px;background:var(--bg2);border:1px solid var(--border2);color:var(--white);font-family:inherit;font-size:12px;outline:none;flex:1}
 .inp-s:focus{border-color:var(--cyan)}
 .inp-num{width:70px;flex:none}
 
-/* ─── MODAL ──────────────────────────────────────────────────── */
-#overlay{
-  display:none;position:fixed;inset:0;
-  background:rgba(0,0,0,.85);z-index:100;
-  align-items:center;justify-content:center;
-}
+/* ─── MODAL ───────────────────────────────────────────────────────── */
+#overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:100;align-items:center;justify-content:center}
 #overlay.on{display:flex}
-.modal{
-  background:var(--bg2);border:1px solid var(--border2);
-  padding:22px;min-width:380px;max-width:580px;width:90%;
-}
+.modal{background:var(--bg2);border:1px solid var(--border2);padding:22px;min-width:380px;max-width:580px;width:90%}
 .modal-title{font-size:13px;font-weight:600;color:var(--white);letter-spacing:2px;margin-bottom:14px}
 .modal-note{font-size:10px;color:var(--muted);margin-bottom:8px;letter-spacing:.5px}
 .modal-foot{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
-
 textarea.inp-s{min-height:140px;resize:vertical;width:100%}
 
-/* ─── TOAST ──────────────────────────────────────────────────── */
+/* ─── TOAST ───────────────────────────────────────────────────────── */
 #toasts{position:fixed;bottom:18px;right:18px;z-index:200;display:flex;flex-direction:column;gap:6px}
-.toast{
-  padding:9px 14px;font-size:11px;border:1px solid;
-  animation:slid .2s ease;letter-spacing:.5px;
-}
+.toast{padding:9px 14px;font-size:11px;border:1px solid;animation:slid .2s ease;letter-spacing:.5px}
 .t-ok{background:rgba(0,255,135,.08);border-color:var(--green);color:var(--green)}
 .t-err{background:rgba(255,48,85,.08);border-color:var(--red);color:var(--red)}
 .t-info{background:var(--cyan2);border-color:var(--cyan);color:var(--cyan)}
 @keyframes slid{from{transform:translateX(100%);opacity:0}to{transform:none;opacity:1}}
 
-/* ─── LOADING ────────────────────────────────────────────────── */
 .loading{display:flex;align-items:center;justify-content:center;padding:36px;color:var(--muted);font-size:11px;letter-spacing:1px}
 
-/* ─── SCROLLBAR ──────────────────────────────────────────────── */
 ::-webkit-scrollbar{width:5px;height:5px}
 ::-webkit-scrollbar-track{background:var(--bg)}
 ::-webkit-scrollbar-thumb{background:var(--border2)}
@@ -307,7 +242,6 @@ textarea.inp-s{min-height:140px;resize:vertical;width:100%}
   </div>
 
   <div id="global-speed"></div>
-
   <div class="spacer"></div>
 
   <div style="display:flex;gap:3px">
@@ -320,7 +254,6 @@ textarea.inp-s{min-height:140px;resize:vertical;width:100%}
 <!-- ═══ BODY ═══ -->
 <div id="layout">
 
-  <!-- Sidebar -->
   <aside id="sb">
     <div class="sb-head">LINK LISTS</div>
     <div id="list-wrap"></div>
@@ -329,20 +262,16 @@ textarea.inp-s{min-height:140px;resize:vertical;width:100%}
     </div>
   </aside>
 
-  <!-- Main -->
   <main id="main">
 
     <!-- Downloads tab -->
     <div id="tab-downloads" class="tab-panel active">
-
-      <!-- Welcome state -->
       <div id="welcome" class="empty">
         <div class="empty-ico">📋</div>
         <div class="empty-ttl">SELECT A LIST</div>
         <div style="font-size:11px">Choose a list from the sidebar or create a new one</div>
       </div>
 
-      <!-- List view -->
       <div id="list-view" style="display:none;flex-direction:column;flex:1;overflow:hidden;">
         <div class="p-head">
           <span class="p-title" id="list-title">—</span>
@@ -363,12 +292,11 @@ textarea.inp-s{min-height:140px;resize:vertical;width:100%}
 
     <!-- Browse tab -->
     <div id="tab-browse" class="tab-panel">
-      <div class="p-head">
-        <span class="p-title">BROWSE FITGIRL REPACKS</span>
-      </div>
+      <div class="p-head"><span class="p-title">BROWSE FITGIRL REPACKS</span></div>
       <div id="browse-scroll">
         <div class="search-row">
-          <input class="inp inp-grow" id="q" placeholder="Search games..." onkeydown="if(event.key==='Enter')doSearch()">
+          <input class="inp inp-grow" id="q" placeholder="Search games…"
+                 onkeydown="if(event.key==='Enter')doSearch()">
           <button class="btn btn-p" onclick="doSearch()">SEARCH</button>
           <button class="btn btn-s" onclick="loadLatest()">LATEST</button>
         </div>
@@ -397,7 +325,7 @@ textarea.inp-s{min-height:140px;resize:vertical;width:100%}
           <div class="s-row">
             <div class="s-lbl">
               Max concurrent downloads
-              <div class="s-desc">aria2c queue depth (restart to apply)</div>
+              <div class="s-desc">aria2c queue depth (restart to apply globally)</div>
             </div>
             <input class="inp-s inp-num" id="s-concurrent" type="number" min="1" max="20">
           </div>
@@ -414,7 +342,7 @@ textarea.inp-s{min-height:140px;resize:vertical;width:100%}
 
         <div id="aria2-info" style="margin-top:20px;padding:12px;background:var(--bg2);border:1px solid var(--border);font-size:10px;color:var(--muted);line-height:1.8;letter-spacing:.5px">
           <div style="color:var(--cyan);letter-spacing:2px;margin-bottom:6px;font-size:9px">ARIA2C DAEMON</div>
-          <div id="aria2-detail">Loading...</div>
+          <div id="aria2-detail">Loading…</div>
         </div>
 
       </div>
@@ -428,7 +356,7 @@ textarea.inp-s{min-height:140px;resize:vertical;width:100%}
 
   <div class="modal" id="modal-new-list" onclick="event.stopPropagation()" style="display:none">
     <div class="modal-title">NEW LIST</div>
-    <input class="inp-s" id="new-name" placeholder="List name..." style="width:100%"
+    <input class="inp-s" id="new-name" placeholder="List name…" style="width:100%"
            onkeydown="if(event.key==='Enter')createList()">
     <div class="modal-foot">
       <button class="btn btn-s" onclick="closeModal()">CANCEL</button>
@@ -450,13 +378,14 @@ textarea.inp-s{min-height:140px;resize:vertical;width:100%}
   <div class="modal" id="modal-scrape" onclick="event.stopPropagation()" style="display:none">
     <div class="modal-title">SCRAPE GAME PAGE</div>
     <div class="modal-note">Enter a Fitgirl game URL — all fuckingfast.co links will be extracted automatically</div>
-    <input class="inp-s" id="scrape-url" placeholder="https://fitgirl-repacks.site/some-game/"
+    <input class="inp-s" id="scrape-url"
+           placeholder="https://fitgirl-repacks.site/some-game/"
            style="width:100%;margin-bottom:8px"
            onkeydown="if(event.key==='Enter')scrapeGame()">
     <div id="scrape-msg" style="font-size:10px;color:var(--muted);min-height:16px"></div>
     <div class="modal-foot">
       <button class="btn btn-s" onclick="closeModal()">CANCEL</button>
-      <button class="btn btn-p" id="scrape-btn" onclick="scrapeGame()">SCRAPE & ADD</button>
+      <button class="btn btn-p" id="scrape-btn" onclick="scrapeGame()">SCRAPE &amp; ADD</button>
     </div>
   </div>
 
@@ -465,19 +394,19 @@ textarea.inp-s{min-height:140px;resize:vertical;width:100%}
 <div id="toasts"></div>
 
 <script>
-// ═══════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
 //  STATE
-// ═══════════════════════════════════════════════════
-let listId   = null;   // currently selected list DB id
-let listName = "";
-let lists    = [];
-let downloads = [];
-let progress = {};     // { dl_id: snapshot } from WebSocket
-let ws       = null;
+// ══════════════════════════════════════════════════
+let listId    = null;   // currently selected list DB id (integer or null)
+let listName  = '';
+let lists     = [];
+let downloads = [];     // snapshot from last reloadDownloads()
+let progress  = {};     // { [dl_id]: snapshot } — live, from WebSocket
+let ws        = null;
 
-// ═══════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
 //  INIT
-// ═══════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', async () => {
   setupTabs();
   await loadLists();
@@ -487,21 +416,34 @@ document.addEventListener('DOMContentLoaded', async () => {
   setInterval(pollStatus, 5000);
 });
 
-// ═══════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
 //  WEBSOCKET
-// ═══════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
 function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}/ws/progress`);
+
   ws.onmessage = e => {
-    const msg = JSON.parse(e.data);
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { return; }
     if (msg.type !== 'progress') return;
-    progress = {};
-    msg.data.forEach(d => progress[d.id] = d);
+
+    // BUG FIX: use aria2_ok from the WS payload to update the badge in real
+    // time instead of waiting for the 5-second pollStatus() interval.
+    updateAria2Badge(msg.aria2_ok);
+
+    // Rebuild progress map.  Note: JSON keys are always strings, so numeric
+    // ids from the server become string keys in JS objects — which is fine
+    // because d.id (a number) is also coerced to a string on lookup.
+    const newProgress = {};
+    (msg.data || []).forEach(d => { newProgress[d.id] = d; });
+    progress = newProgress;
+
     applyProgress();
     updateStats();
-    updateGlobalSpeed(msg.data);
+    updateGlobalSpeed(msg.data || []);
   };
+
   ws.onclose = () => setTimeout(connectWS, 3000);
   ws.onerror = () => ws.close();
 }
@@ -510,70 +452,91 @@ function applyProgress() {
   Object.values(progress).forEach(p => {
     const card = document.querySelector(`[data-dl-id="${p.id}"]`);
     if (!card) return;
+
     card.dataset.status = p.status;
 
-    // Badge
     const badge = card.querySelector('.badge');
-    badge.className = `badge s-${p.status}`;
-    badge.textContent = p.status.toUpperCase();
-
-    // Progress bar
-    const fill = card.querySelector('.bar-fill');
-    fill.style.width = p.progress + '%';
-    fill.className = 'bar-fill' + (p.status === 'completed' ? ' complete' : p.status === 'failed' ? ' failed' : '');
-
-    // Meta row
-    card.querySelector('.dl-speed').textContent  = p.speed > 0 ? fmtSpeed(p.speed) : '';
-    card.querySelector('.dl-size').textContent   = `${fmtBytes(p.bytes_downloaded)} / ${fmtBytes(p.total_bytes)}`;
-    card.querySelector('.dl-pct').textContent    = p.progress.toFixed(1) + '%';
-    card.querySelector('.dl-conns').textContent  = p.connections > 0 ? `${p.connections}× conn` : '';
-
-    if (p.filename && p.filename !== card.querySelector('.dl-fname').title) {
-      card.querySelector('.dl-fname').textContent = p.filename;
-      card.querySelector('.dl-fname').title = p.filename;
+    if (badge) {
+      badge.className = `badge s-${p.status}`;
+      badge.textContent = p.status.toUpperCase();
     }
-    card.querySelector('.dl-gid').textContent = p.gid ? `GID:${p.gid.substring(0,8)}` : '';
 
-    // Show/hide action buttons
+    const fill = card.querySelector('.bar-fill');
+    if (fill) {
+      fill.style.width = (p.progress || 0) + '%';
+      fill.className = 'bar-fill'
+        + (p.status === 'completed' ? ' complete'
+          : p.status === 'failed'  ? ' failed'
+          : p.status === 'paused'  ? ' paused' : '');
+    }
+
+    const speedEl = card.querySelector('.dl-speed');
+    if (speedEl) speedEl.textContent = p.speed > 0 ? fmtSpeed(p.speed) : '';
+
+    const sizeEl = card.querySelector('.dl-size');
+    if (sizeEl) sizeEl.textContent = `${fmtBytes(p.bytes_downloaded)} / ${fmtBytes(p.total_bytes)}`;
+
+    const pctEl = card.querySelector('.dl-pct');
+    if (pctEl) pctEl.textContent = (p.progress || 0).toFixed(1) + '%';
+
+    const connsEl = card.querySelector('.dl-conns');
+    if (connsEl) connsEl.textContent = p.connections > 0 ? `${p.connections}× conn` : '';
+
+    // Update filename if aria2c resolved a better name
+    const fnameEl = card.querySelector('.dl-fname');
+    if (fnameEl && p.filename && fnameEl.dataset.filename !== p.filename) {
+      fnameEl.textContent = p.filename;
+      fnameEl.title = p.filename;
+      fnameEl.dataset.filename = p.filename;
+    }
+
+    const gidEl = card.querySelector('.dl-gid');
+    if (gidEl) gidEl.textContent = p.gid ? `GID:${p.gid.substring(0, 8)}` : '';
+
     refreshButtons(card, p.status);
 
-    // Error
+    // Error line
     let errEl = card.querySelector('.dl-err');
     if (p.error) {
-      if (!errEl) { errEl = document.createElement('div'); errEl.className = 'dl-err'; card.appendChild(errEl); }
+      if (!errEl) {
+        errEl = document.createElement('div');
+        errEl.className = 'dl-err';
+        card.appendChild(errEl);
+      }
       errEl.textContent = '⚠ ' + p.error;
-    } else if (errEl) errEl.remove();
+    } else if (errEl) {
+      errEl.remove();
+    }
   });
 }
 
 function updateGlobalSpeed(data) {
   const total = data.reduce((s, d) => s + (d.speed || 0), 0);
-  const el = document.getElementById('global-speed');
-  el.textContent = total > 0 ? '↓ ' + fmtSpeed(total) : '';
+  document.getElementById('global-speed').textContent = total > 0 ? '↓ ' + fmtSpeed(total) : '';
 }
 
 function refreshButtons(card, status) {
-  const show = s => card.querySelector(s) ? (card.querySelector(s).style.display = '') : null;
-  const hide = s => card.querySelector(s) ? (card.querySelector(s).style.display = 'none') : null;
-
-  const active = ['downloading', 'queued'].includes(status);
-  const idle   = ['pending', 'failed'].includes(status);
-
-  idle   ? show('.b-start') : hide('.b-start');
-  status === 'downloading' ? show('.b-pause') : hide('.b-pause');
-  status === 'paused'      ? show('.b-resume') : hide('.b-resume');
-  active || status === 'paused' ? show('.b-stop') : hide('.b-stop');
+  const toggle = (sel, show) => {
+    const el = card.querySelector(sel);
+    if (el) el.style.display = show ? '' : 'none';
+  };
+  const isIdle   = ['pending', 'failed'].includes(status);
+  const isActive = ['downloading', 'queued'].includes(status);
+  toggle('.b-start',  isIdle);
+  toggle('.b-pause',  status === 'downloading');
+  toggle('.b-resume', status === 'paused');
+  toggle('.b-stop',   isActive || status === 'paused');
 }
 
 function updateStats() {
   const cards = document.querySelectorAll('[data-dl-id]');
-  const c = {pending:0, active:0, done:0, failed:0};
+  const c = { pending: 0, active: 0, done: 0, failed: 0 };
   cards.forEach(card => {
     const s = card.dataset.status;
-    if (['pending','queued'].includes(s)) c.pending++;
-    else if (['downloading','paused'].includes(s)) c.active++;
+    if (['pending', 'queued'].includes(s)) c.pending++;
+    else if (['downloading', 'paused'].includes(s)) c.active++;
     else if (s === 'completed') c.done++;
-    else if (s === 'failed') c.failed++;
+    else if (s === 'failed')    c.failed++;
   });
   document.getElementById('s-total').textContent   = cards.length;
   document.getElementById('s-pending').textContent = c.pending;
@@ -582,36 +545,45 @@ function updateStats() {
   document.getElementById('s-failed').textContent  = c.failed;
 }
 
-// ═══════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
 //  ARIA2C STATUS
-// ═══════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
+
+// BUG FIX: separated badge update from full status poll so WebSocket
+// messages can update the indicator in real time (< 1 s latency) while
+// the detail panel still refreshes every 5 s via pollStatus().
+function updateAria2Badge(online) {
+  const dot   = document.getElementById('aria2-dot');
+  const label = document.getElementById('aria2-label');
+  if (online) {
+    dot.className   = 'dot ok';
+    label.textContent = 'aria2c';
+  } else {
+    dot.className   = 'dot err';
+    label.textContent = 'aria2c offline';
+  }
+}
+
 async function pollStatus() {
   try {
     const s = await req('/api/status');
-    const dot   = document.getElementById('aria2-dot');
-    const label = document.getElementById('aria2-label');
-    if (s && s.aria2_running) {
-      dot.className = 'dot ok';
-      label.textContent = 'aria2c';
-    } else {
-      dot.className = 'dot err';
-      label.textContent = 'aria2c offline';
-    }
+    if (!s) return;
+    updateAria2Badge(s.aria2_running);
     const detail = document.getElementById('aria2-detail');
-    if (detail && s) {
+    if (detail) {
       detail.innerHTML = s.aria2_running
         ? `status: <span style="color:var(--green)">online</span><br>`
-        + `active: <span style="color:var(--cyan)">${s.num_active || 0}</span>  |  `
-        + `queued: <span style="color:var(--cyan)">${s.num_waiting || 0}</span>  |  `
-        + `done: <span style="color:var(--cyan)">${s.num_stopped || 0}</span>`
+          + `active: <span style="color:var(--cyan)">${s.num_active || 0}</span>  |  `
+          + `queued: <span style="color:var(--cyan)">${s.num_waiting || 0}</span>  |  `
+          + `done: <span style="color:var(--cyan)">${s.num_stopped || 0}</span>`
         : `status: <span style="color:var(--red)">offline — install aria2c and restart</span>`;
     }
-  } catch {}
+  } catch { /* network blip — ignore */ }
 }
 
-// ═══════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
 //  TABS
-// ═══════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
 function setupTabs() {
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => switchTab(btn.dataset.tab));
@@ -627,9 +599,9 @@ function switchTab(name) {
     loadLatest();
 }
 
-// ═══════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
 //  LISTS
-// ═══════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
 async function loadLists() {
   lists = await req('/api/lists') || [];
   renderLists();
@@ -679,49 +651,59 @@ function renderDownloads() {
     </div>`;
     return;
   }
+
   scroll.innerHTML = downloads.map(d => {
-    const live  = progress[d.id] || d;
-    const st    = live.status || d.status;
-    const pct   = live.progress || 0;
-    const speed = live.speed || 0;
+    // Prefer live progress data from the WS cache, fall back to DB snapshot
+    const live  = progress[d.id] || {};
+    const st    = live.status    || d.status   || 'pending';
+    const pct   = live.progress  ?? d.progress ?? 0;
+    const speed = live.speed     || 0;
     const conns = live.connections || 0;
-    const gid   = live.gid || '';
-    const fname = live.filename || d.filename || d.url.split('/').pop();
-    const idle  = ['pending','failed'].includes(st);
-    const isActive = ['downloading','queued'].includes(st);
+    const gid   = live.gid       || '';
+    const fname = live.filename  || d.filename || d.url.split('/').pop() || `file_${d.id}`;
+    const bDl   = live.bytes_downloaded ?? d.bytes_downloaded ?? 0;
+    const tot   = live.total_bytes      ?? d.total_bytes      ?? 0;
+    const errMsg = d.error_message || live.error || '';
+
+    const isIdle   = ['pending', 'failed'].includes(st);
+    const isActive = ['downloading', 'queued'].includes(st);
+
+    const barClass = st === 'completed' ? ' complete'
+                   : st === 'failed'   ? ' failed'
+                   : st === 'paused'   ? ' paused' : '';
+
     return `
     <div class="dl-card" data-dl-id="${d.id}" data-status="${st}">
       <div class="dl-r1">
-        <span class="dl-fname" title="${esc(fname)}">${esc(fname)}</span>
-        <span class="dl-gid">${gid ? 'GID:' + gid.substring(0,8) : ''}</span>
+        <span class="dl-fname" title="${esc(fname)}" data-filename="${esc(fname)}">${esc(fname)}</span>
+        <span class="dl-gid">${gid ? 'GID:' + gid.substring(0, 8) : ''}</span>
         <span class="badge s-${st}">${st.toUpperCase()}</span>
         <div class="dl-actions">
-          <button class="btn btn-p btn-xs b-start" ${idle?'':'style="display:none"'} onclick="startDl(${d.id})">▶</button>
-          <button class="btn btn-s btn-xs b-pause" ${st==='downloading'?'':'style="display:none"'} onclick="pauseDl(${d.id})">⏸</button>
-          <button class="btn btn-p btn-xs b-resume" ${st==='paused'?'':'style="display:none"'} onclick="resumeDl(${d.id})">▶</button>
-          <button class="btn btn-s btn-xs b-stop" ${isActive||st==='paused'?'':'style="display:none"'} onclick="stopDl(${d.id})">⏹</button>
-          <button class="btn btn-d btn-xs" onclick="deleteDl(${d.id})">✕</button>
+          <button class="btn btn-p btn-xs b-start"  ${isIdle   ? '' : 'style="display:none"'} onclick="startDl(${d.id})">▶</button>
+          <button class="btn btn-s btn-xs b-pause"  ${st === 'downloading' ? '' : 'style="display:none"'} onclick="pauseDl(${d.id})">⏸</button>
+          <button class="btn btn-p btn-xs b-resume" ${st === 'paused'      ? '' : 'style="display:none"'} onclick="resumeDl(${d.id})">▶</button>
+          <button class="btn btn-s btn-xs b-stop"   ${isActive || st === 'paused' ? '' : 'style="display:none"'} onclick="stopDl(${d.id})">⏹</button>
+          <button class="btn btn-d btn-xs"  onclick="deleteDl(${d.id})">✕</button>
         </div>
       </div>
       <div class="bar-bg">
-        <div class="bar-fill ${st==='completed'?'complete':st==='failed'?'failed':''}"
-             style="width:${pct}%"></div>
+        <div class="bar-fill${barClass}" style="width:${pct}%"></div>
       </div>
       <div class="dl-r2">
         <span class="dl-url">${esc(d.url)}</span>
-        <span class="dl-conns">${conns > 0 ? conns+'× conn' : ''}</span>
+        <span class="dl-conns">${conns > 0 ? conns + '× conn' : ''}</span>
         <span class="dl-speed">${speed > 0 ? fmtSpeed(speed) : ''}</span>
-        <span class="dl-size">${fmtBytes(d.bytes_downloaded)} / ${fmtBytes(d.total_bytes)}</span>
+        <span class="dl-size">${fmtBytes(bDl)} / ${fmtBytes(tot)}</span>
         <span class="dl-pct">${pct.toFixed(1)}%</span>
       </div>
-      ${d.error_message ? `<div class="dl-err">⚠ ${esc(d.error_message)}</div>` : ''}
+      ${errMsg ? `<div class="dl-err">⚠ ${esc(errMsg)}</div>` : ''}
     </div>`;
   }).join('');
 }
 
-// ═══════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
 //  DOWNLOAD CONTROLS
-// ═══════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
 async function startDl(id) {
   const r = await req(`/api/downloads/${id}/start`, 'POST');
   if (r) toast('Resolving URL → queuing in aria2c…', 'info');
@@ -729,6 +711,7 @@ async function startDl(id) {
 
 function pauseDl(id) {
   req(`/api/downloads/${id}/pause`, 'POST');
+  // Optimistic UI update — WS will confirm within 1 s
   const c = document.querySelector(`[data-dl-id="${id}"]`);
   if (c) { c.dataset.status = 'paused'; refreshButtons(c, 'paused'); }
 }
@@ -750,30 +733,38 @@ async function deleteDl(id) {
   await req(`/api/downloads/${id}`, 'DELETE');
   downloads = downloads.filter(d => d.id !== id);
   renderDownloads();
-  await loadLists();
+  await loadLists(); // refresh sidebar count
 }
 
 async function startAll() {
-  const pending = downloads.filter(d => ['pending','failed'].includes(
-    (progress[d.id] || d).status));
-  if (!pending.length) return toast('No pending downloads', 'info');
-  let n = 0;
-  for (const d of pending) { await req(`/api/downloads/${d.id}/start`, 'POST'); n++; }
-  toast(`Started ${n} downloads`, 'ok');
+  // BUG FIX: read effective status from live progress cache, not just the
+  // stale `downloads` array — prevents re-sending start to already-running items.
+  const pending = downloads.filter(d => {
+    const st = (progress[d.id] || d).status;
+    return ['pending', 'failed'].includes(st);
+  });
+  if (!pending.length) { toast('No pending downloads', 'info'); return; }
+
+  let started = 0;
+  for (const d of pending) {
+    const r = await req(`/api/downloads/${d.id}/start`, 'POST');
+    if (r) started++;
+  }
+  if (started) toast(`Started ${started} download${started !== 1 ? 's' : ''}`, 'ok');
 }
 
-// ═══════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
 //  LIST MANAGEMENT
-// ═══════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
 async function createList() {
   const name = document.getElementById('new-name').value.trim();
-  if (!name) return toast('Enter a name', 'err');
+  if (!name) { toast('Enter a name', 'err'); return; }
   const r = await req('/api/lists', 'POST', { name });
   if (r) {
     closeModal();
     document.getElementById('new-name').value = '';
     await loadLists();
-    selectList(r.id, r.name);
+    await selectList(r.id, r.name);
     toast(`"${name}" created`, 'ok');
   }
 }
@@ -783,6 +774,7 @@ async function deleteList(id) {
   await req(`/api/lists/${id}`, 'DELETE');
   if (listId === id) {
     listId = null;
+    listName = '';
     document.getElementById('welcome').style.display = 'flex';
     document.getElementById('list-view').style.display = 'none';
   }
@@ -791,39 +783,50 @@ async function deleteList(id) {
 }
 
 async function addLinks() {
+  // BUG FIX: guard against listId being null (modal opened without a list selected)
+  if (!listId) { toast('Select a list first', 'err'); closeModal(); return; }
+
   const text = document.getElementById('links-text').value;
   const urls = text.split('\n').map(s => s.trim()).filter(Boolean);
-  if (!urls.length) return toast('No links found', 'err');
+  if (!urls.length) { toast('No links found', 'err'); return; }
+
   const r = await req(`/api/lists/${listId}/links`, 'POST', { urls });
   if (r) {
     closeModal();
     document.getElementById('links-text').value = '';
     await reloadDownloads();
     await loadLists();
-    toast(`Added ${r.added} links`, 'ok');
+    toast(`Added ${r.added} link${r.added !== 1 ? 's' : ''}`, 'ok');
   }
 }
 
 async function scrapeGame() {
+  // BUG FIX: if no list was selected, the original code sent list_id: null to
+  // the API which returned 404 — confusing.  Now we validate up front.
+  if (!listId) { toast('Select a list first', 'err'); closeModal(); return; }
+
   const url = document.getElementById('scrape-url').value.trim();
-  if (!url) return toast('Enter a URL', 'err');
+  if (!url) { toast('Enter a URL', 'err'); return; }
+
   const btn = document.getElementById('scrape-btn');
   const msg = document.getElementById('scrape-msg');
   btn.disabled = true;
   msg.style.color = 'var(--cyan)';
   msg.textContent = 'Fetching game page…';
+
   const r = await req('/api/scrape/links', 'POST', { game_url: url, list_id: listId });
   btn.disabled = false;
+
   if (r) {
     msg.style.color = 'var(--green)';
-    msg.textContent = `Found ${r.found} links!`;
+    msg.textContent = `Found ${r.found} link${r.found !== 1 ? 's' : ''}!`;
     setTimeout(async () => {
       closeModal();
       document.getElementById('scrape-url').value = '';
       msg.textContent = '';
       await reloadDownloads();
       await loadLists();
-      toast(`Scraped ${r.added} links`, 'ok');
+      toast(`Scraped ${r.added} link${r.added !== 1 ? 's' : ''}`, 'ok');
     }, 800);
   } else {
     msg.style.color = 'var(--red)';
@@ -831,34 +834,31 @@ async function scrapeGame() {
   }
 }
 
-// ═══════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
 //  BROWSE
-// ═══════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
 async function doSearch() {
   const q = document.getElementById('q').value.trim();
-  document.getElementById('games-grid').innerHTML =
-    '<div class="loading">Searching…</div>';
+  document.getElementById('games-grid').innerHTML = '<div class="loading">Searching…</div>';
   const r = await req(`/api/scrape/search?query=${encodeURIComponent(q)}`);
   renderGames(r ? r.games : []);
 }
 
 async function loadLatest() {
-  document.getElementById('games-grid').innerHTML =
-    '<div class="loading">Loading latest repacks…</div>';
+  document.getElementById('games-grid').innerHTML = '<div class="loading">Loading latest repacks…</div>';
   const r = await req('/api/scrape/search?query=&page=1');
   renderGames(r ? r.games : []);
 }
 
 function renderGames(games) {
   const grid = document.getElementById('games-grid');
-  if (!games.length) { grid.innerHTML = '<div class="loading">No results</div>'; return; }
-  const opts = lists.map(l =>
-    `<option value="${l.id}">${esc(l.name)}</option>`).join('');
+  if (!games || !games.length) { grid.innerHTML = '<div class="loading">No results</div>'; return; }
+  const opts = lists.map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join('');
   grid.innerHTML = games.map((g, i) => {
     const sid = 'gs_' + i;
     return `<div class="game-card">
-      <img class="game-thumb" src="${g.image||''}" alt=""
-           onerror="this.style.background='var(--bg3)';this.src=''" loading="lazy">
+      <img class="game-thumb" src="${esc(g.image || '')}" alt=""
+           onerror="this.style.background='var(--bg3)';this.removeAttribute('src')" loading="lazy">
       <div class="game-body">
         <div class="game-title" title="${esc(g.title)}">${esc(g.title)}</div>
         <div class="game-add">
@@ -875,46 +875,56 @@ function renderGames(games) {
 
 async function addFromBrowse(url, selId) {
   const sel = document.getElementById(selId);
-  const id  = sel ? parseInt(sel.value) : 0;
-  if (!id) return toast('Select a list first', 'err');
+  const id  = sel ? parseInt(sel.value, 10) : 0;
+  if (!id) { toast('Select a list first', 'err'); return; }
   toast('Scraping links…', 'info');
   const r = await req('/api/scrape/links', 'POST', { game_url: url, list_id: id });
   if (r) {
-    toast(`Added ${r.added} links`, 'ok');
+    toast(`Added ${r.added} link${r.added !== 1 ? 's' : ''}`, 'ok');
     await loadLists();
     if (listId === id) await reloadDownloads();
   }
 }
 
-// ═══════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
 //  SETTINGS
-// ═══════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
 async function loadSettings() {
   const s = await req('/api/settings');
   if (!s) return;
-  document.getElementById('s-path').value       = s.download_path || '';
-  document.getElementById('s-concurrent').value = s.max_concurrent || 3;
+  document.getElementById('s-path').value       = s.download_path        || '';
+  document.getElementById('s-concurrent').value = s.max_concurrent       || 3;
+  // BUG FIX: connections_per_file was not in the default settings so this
+  // field showed empty on first launch.  Now seeded in init_db() with '4'.
   document.getElementById('s-conns').value      = s.connections_per_file || 4;
 }
 
 async function saveSettings() {
+  const mc   = parseInt(document.getElementById('s-concurrent').value, 10);
+  const conn = parseInt(document.getElementById('s-conns').value, 10);
+
+  if (isNaN(mc) || mc < 1 || mc > 20) { toast('Max concurrent must be 1–20', 'err'); return; }
+  if (isNaN(conn) || conn < 1 || conn > 16) { toast('Connections per file must be 1–16', 'err'); return; }
+
   const data = {
-    download_path:        document.getElementById('s-path').value,
-    max_concurrent:       parseInt(document.getElementById('s-concurrent').value),
-    connections_per_file: parseInt(document.getElementById('s-conns').value),
+    download_path:        document.getElementById('s-path').value.trim(),
+    max_concurrent:       mc,
+    connections_per_file: conn,
   };
   const r = await req('/api/settings', 'PUT', data);
   if (r) toast('Settings saved', 'ok');
 }
 
-// ═══════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
 //  MODALS
-// ═══════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
 function openModal(name) {
   document.querySelectorAll('.modal').forEach(m => m.style.display = 'none');
   const m = document.getElementById('modal-' + name);
   if (m) m.style.display = 'block';
   document.getElementById('overlay').classList.add('on');
+  // Focus the first input for keyboard convenience
+  setTimeout(() => { const inp = m && m.querySelector('input,textarea'); if (inp) inp.focus(); }, 50);
 }
 
 function closeModal() {
@@ -927,9 +937,9 @@ function maybeClose(e) {
 
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
-// ═══════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
 //  HELPERS
-// ═══════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
 async function req(url, method = 'GET', body = null) {
   try {
     const opts = { method, headers: { 'Content-Type': 'application/json' } };
@@ -941,25 +951,31 @@ async function req(url, method = 'GET', body = null) {
       return null;
     }
     return await res.json();
-  } catch (e) {
+  } catch {
     toast('Network error', 'err');
     return null;
   }
 }
 
+/**
+ * Format byte count into a human-readable string.
+ * BUG FIX: original returned '0 B' for any falsy value but did not guard
+ * against NaN or negative numbers, which would produce 'NaN B' or '-Infinity B'.
+ */
 function fmtBytes(b) {
-  if (!b) return '0 B';
-  const u = ['B','KB','MB','GB','TB'];
-  const i = Math.floor(Math.log(b) / Math.log(1024));
-  return (b / Math.pow(1024, i)).toFixed(1) + ' ' + u[Math.min(i, u.length-1)];
+  b = Number(b);
+  if (!isFinite(b) || b <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.min(Math.floor(Math.log(b) / Math.log(1024)), units.length - 1);
+  return (b / Math.pow(1024, i)).toFixed(1) + ' ' + units[i];
 }
 
 function fmtSpeed(bps) { return fmtBytes(bps) + '/s'; }
 
 function esc(s) {
-  return String(s)
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
-    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return String(s ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function toast(msg, type = 'info') {
@@ -968,7 +984,7 @@ function toast(msg, type = 'info') {
   el.className = `toast t-${type === 'ok' ? 'ok' : type === 'err' ? 'err' : 'info'}`;
   el.textContent = msg;
   box.appendChild(el);
-  setTimeout(() => el.remove(), 3000);
+  setTimeout(() => el.remove(), 3500);
 }
 </script>
 </body>

@@ -1,16 +1,26 @@
 """
 Scraper module:
-  - get_fuckingfast_links(game_url)  → list of fuckingfast.co URLs from a Fitgirl page
+  - get_fuckingfast_links(game_url)      → list of fuckingfast.co URLs from a Fitgirl page
   - resolve_fuckingfast_download(ff_url) → actual direct download URL
-  - search_fitgirl(query, page)      → list of game dicts from Fitgirl search/homepage
+  - search_fitgirl(query, page)          → list of game dicts from Fitgirl search/homepage
+
+Bug fixed vs. original:
+  - A single module-level requests.Session was shared across threads.
+    asyncio.to_thread() dispatches calls to a thread-pool, so concurrent
+    scrape/resolve calls could corrupt the session's internal state (cookies,
+    redirects, keep-alive connections).  Each public function now gets its
+    own Session via _get_session(), which uses threading.local() so sessions
+    are created once per worker thread and then safely reused within that thread.
 """
 
 import re
+import threading
+from typing import Dict, List, Optional
+
 import requests
 from bs4 import BeautifulSoup
-from typing import List, Dict, Optional
 
-HEADERS = {
+HEADERS: dict[str, str] = {
     "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "accept-language": "en-US,en;q=0.5",
     "user-agent": (
@@ -20,16 +30,27 @@ HEADERS = {
     ),
 }
 
-SESSION = requests.Session()
-SESSION.headers.update(HEADERS)
+# BUG FIX: thread-local storage gives each thread its own Session instance,
+# preserving connection-pooling benefits while eliminating race conditions.
+_tls = threading.local()
+
+
+def _get_session() -> requests.Session:
+    """Return the calling thread's requests.Session, creating it on first use."""
+    if not hasattr(_tls, "session"):
+        s = requests.Session()
+        s.headers.update(HEADERS)
+        _tls.session = s
+    return _tls.session
 
 
 def get_fuckingfast_links(game_url: str) -> List[str]:
     """
-    Given a Fitgirl game page URL, return all fuckingfast.co download links.
+    Given a Fitgirl game-page URL, return all fuckingfast.co download links.
     These are found inside <div class="dlinks"> elements.
     """
-    resp = SESSION.get(game_url, timeout=15)
+    session = _get_session()
+    resp = session.get(game_url, timeout=15)
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")
 
@@ -53,8 +74,9 @@ def resolve_fuckingfast_download(ff_url: str) -> str:
     Given a fuckingfast.co link, return the actual direct download URL.
     The page embeds a JavaScript function that calls window.open(url).
     """
-    referer_headers = {**HEADERS, "referer": "https://fitgirl-repacks.site/"}
-    resp = SESSION.get(ff_url, headers=referer_headers, timeout=15)
+    session = _get_session()
+    referer_headers = {"referer": "https://fitgirl-repacks.site/"}
+    resp = session.get(ff_url, headers=referer_headers, timeout=15)
     resp.raise_for_status()
 
     soup = BeautifulSoup(resp.text, "html.parser")
@@ -71,7 +93,7 @@ def resolve_fuckingfast_download(ff_url: str) -> str:
         href: str = a["href"]
         if any(href.lower().endswith(ext) for ext in (".zip", ".rar", ".iso", ".7z")):
             return href
-        # part files like .part1.rar, .r00 etc.
+        # Part files like .part1.rar, .r00 etc.
         if re.search(r"\.(part\d+\.rar|r\d{2})$", href, re.I):
             return href
 
@@ -86,6 +108,8 @@ def search_fitgirl(query: str = "", page: int = 1) -> List[Dict]:
     Search Fitgirl repacks or browse the homepage.
     Returns a list of dicts: {title, url, image, excerpt}
     """
+    session = _get_session()
+
     if query.strip():
         url = f"https://fitgirl-repacks.site/?s={requests.utils.quote(query)}"
     elif page > 1:
@@ -93,14 +117,13 @@ def search_fitgirl(query: str = "", page: int = 1) -> List[Dict]:
     else:
         url = "https://fitgirl-repacks.site/"
 
-    resp = SESSION.get(url, timeout=15)
+    resp = session.get(url, timeout=15)
     resp.raise_for_status()
 
     soup = BeautifulSoup(resp.text, "html.parser")
     games: List[Dict] = []
 
     for article in soup.find_all("article", limit=24):
-        # Title & link
         title_tag = article.find(["h1", "h2"], class_="entry-title")
         if not title_tag:
             continue
@@ -123,8 +146,6 @@ def search_fitgirl(query: str = "", page: int = 1) -> List[Dict]:
         if content_div:
             excerpt = content_div.get_text(" ", strip=True)[:220]
 
-        games.append(
-            {"title": title, "url": game_url, "image": image, "excerpt": excerpt}
-        )
+        games.append({"title": title, "url": game_url, "image": image, "excerpt": excerpt})
 
     return games

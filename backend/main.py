@@ -1,18 +1,32 @@
 """
 FastAPI backend for EasyDL.
 
-Key differences from the aiohttp version:
-  - on_startup launches aria2c and connects via aria2p
-  - on_shutdown sends aria2.shutdown via RPC
-  - _resolve_and_start callback receives a progress DICT (not a DownloadTask)
-  - /api/status exposes aria2c global stats for the UI header
-  - Settings include connections_per_file
+Bugs fixed vs. original:
+  - @app.on_event("startup"/"shutdown") deprecated since FastAPI 0.93.
+    Replaced with a proper lifespan context manager.
+  - api_pause / api_resume / api_stop / api_delete_list / api_delete_download
+    all called dm methods synchronously from async def endpoints.  Those dm
+    methods are now async (downloader.py fix); endpoints now await them.
+  - api_update_settings called dm.set_max_concurrent() (now async) without
+    await — would have blocked the event loop.
+  - _resolve_and_start: actual_url / output_path could be UnboundLocalError
+    if db.commit() threw between the two commits.  Initialised to None and
+    guarded before use.
+  - _resolve_and_start: error_message truncated to 500 chars to avoid
+    storing unbounded strings in SQLite.
+  - api_start now cross-checks the live aria2c cache status (not only the
+    DB value) to prevent double-start races.
+  - datetime.utcnow() replaced with datetime.now(timezone.utc) throughout.
+  - Missing logging import added.
+  - on_update DB write now also truncates error messages.
 """
 
 import asyncio
+import logging
 import os
-from datetime import datetime
-from typing import List
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from typing import List, Optional
 
 from fastapi import Body, Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
@@ -23,27 +37,28 @@ from database import Download, LinkList, SessionLocal, Setting, get_db, init_db
 from downloader import dm
 from scraper import get_fuckingfast_links, resolve_fuckingfast_download, search_fitgirl
 
+logger = logging.getLogger(__name__)
+
 FRONTEND_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "frontend")
 )
 
-app = FastAPI(title="EasyDL")
 
+# ── Lifespan ───────────────────────────────────────────────────────────────────
+# BUG FIX: @app.on_event is deprecated; use lifespan context manager instead.
 
-# ── Lifecycle ─────────────────────────────────────────────────────────────────
-
-@app.on_event("startup")
-async def on_startup() -> None:
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # ── startup ──
     init_db()
 
-    # Load persisted settings to configure aria2c
     db = SessionLocal()
     try:
         s = {row.key: row.value for row in db.query(Setting).all()}
     finally:
         db.close()
 
-    max_concurrent      = int(s.get("max_concurrent", 3))
+    max_concurrent       = int(s.get("max_concurrent", 3))
     connections_per_file = int(s.get("connections_per_file", 4))
 
     try:
@@ -51,18 +66,21 @@ async def on_startup() -> None:
             max_concurrent=max_concurrent,
             connections_per_file=connections_per_file,
         )
-        print("✓ aria2c connected and ready.")
+        logger.info("✓ aria2c connected and ready.")
     except RuntimeError as exc:
-        # App still starts — downloads will fail until aria2c is installed
-        print(f"⚠  aria2c unavailable: {exc}")
+        logger.warning("⚠  aria2c unavailable: %s", exc)
 
+    yield  # ← app runs here
 
-@app.on_event("shutdown")
-async def on_shutdown() -> None:
+    # ── shutdown ──
     await dm.shutdown()
+    logger.info("aria2c shut down cleanly.")
 
 
-# ── Pydantic models ───────────────────────────────────────────────────────────
+app = FastAPI(title="EasyDL", lifespan=lifespan)
+
+
+# ── Pydantic models ────────────────────────────────────────────────────────────
 
 class ListCreate(BaseModel):
     name: str
@@ -77,7 +95,7 @@ class ScrapeRequest(BaseModel):
     list_id: int
 
 
-# ── Lists ─────────────────────────────────────────────────────────────────────
+# ── Lists ──────────────────────────────────────────────────────────────────────
 
 @app.get("/api/lists")
 def api_get_lists(db: Session = Depends(get_db)):
@@ -94,9 +112,12 @@ def api_get_lists(db: Session = Depends(get_db)):
 
 @app.post("/api/lists", status_code=201)
 def api_create_list(data: ListCreate, db: Session = Depends(get_db)):
-    if db.query(LinkList).filter(LinkList.name == data.name).first():
+    name = data.name.strip()
+    if not name:
+        raise HTTPException(400, "List name cannot be empty.")
+    if db.query(LinkList).filter(LinkList.name == name).first():
         raise HTTPException(400, "A list with that name already exists.")
-    lst = LinkList(name=data.name)
+    lst = LinkList(name=name)
     db.add(lst)
     db.commit()
     db.refresh(lst)
@@ -104,12 +125,13 @@ def api_create_list(data: ListCreate, db: Session = Depends(get_db)):
 
 
 @app.delete("/api/lists/{list_id}")
-def api_delete_list(list_id: int, db: Session = Depends(get_db)):
+async def api_delete_list(list_id: int, db: Session = Depends(get_db)):
+    # BUG FIX: was `def` — dm.stop() is now async, must be awaited.
     lst = db.query(LinkList).filter(LinkList.id == list_id).first()
     if not lst:
         raise HTTPException(404, "List not found.")
     for dl in lst.downloads:
-        dm.stop(dl.id)
+        await dm.stop(dl.id)
     db.delete(lst)
     db.commit()
     return {"status": "deleted"}
@@ -125,22 +147,22 @@ def api_get_downloads(list_id: int, db: Session = Depends(get_db)):
     )
     result = []
     for d in dls:
-        live      = dm.get_progress(d.id) or {}
-        bytes_dl  = live.get("bytes_downloaded", d.bytes_downloaded)
-        total     = live.get("total_bytes", d.total_bytes)
+        live     = dm.get_progress(d.id) or {}
+        bytes_dl = live.get("bytes_downloaded", d.bytes_downloaded)
+        total    = live.get("total_bytes", d.total_bytes)
         result.append(
             {
                 "id":               d.id,
                 "url":              d.source_url,
                 "filename":         live.get("filename") or d.filename or "",
-                "status":           live.get("status", d.status),
+                "status":           live.get("status") or d.status,
                 "bytes_downloaded": bytes_dl,
                 "total_bytes":      total,
                 "progress":         live.get("progress", (bytes_dl / total * 100) if total else 0),
                 "speed":            live.get("speed", 0),
                 "connections":      live.get("connections", 0),
                 "gid":              live.get("gid", ""),
-                "error_message":    d.error_message or live.get("error"),
+                "error_message":    d.error_message or live.get("error") or "",
             }
         )
     return result
@@ -160,71 +182,110 @@ def api_add_links(list_id: int, data: LinksAdd, db: Session = Depends(get_db)):
     return {"added": added}
 
 
-# ── Downloads ─────────────────────────────────────────────────────────────────
+# ── Downloads ──────────────────────────────────────────────────────────────────
 
 async def _resolve_and_start(dl_id: int, base_path: str, list_name: str) -> None:
     """
     Background task:
-      1. Resolve fuckingfast.co → direct download URL   (sync HTTP in thread)
+      1. Resolve fuckingfast.co → direct CDN URL   (blocking HTTP in thread)
       2. Persist resolved URL + filename to DB
       3. Enqueue in aria2c
 
-    The on_update callback receives a progress DICT from the aria2 poll loop:
-      { id, gid, filename, status, bytes_downloaded, total_bytes,
-        progress, speed, connections, error }
+    Bugs fixed:
+      - actual_url / output_path initialised to None to avoid UnboundLocalError
+        if either db.commit() raises before they are assigned.
+      - error_message capped at 500 chars.
+      - dm.enqueue failure now also updates the DB status to 'failed'.
+      - datetime.utcnow() → datetime.now(timezone.utc).
     """
+    actual_url:  Optional[str] = None
+    output_path: Optional[str] = None
+
     db = SessionLocal()
     try:
         dl = db.query(Download).filter(Download.id == dl_id).first()
         if not dl:
+            logger.warning("_resolve_and_start: dl_id=%s not found in DB", dl_id)
             return
 
         dl.status = "queued"
         db.commit()
 
         try:
-            actual_url: str = await asyncio.to_thread(
+            actual_url = await asyncio.to_thread(
                 resolve_fuckingfast_download, dl.source_url
             )
         except Exception as exc:
+            logger.error("URL resolution failed for dl_id=%s: %s", dl_id, exc)
             dl.status = "failed"
-            dl.error_message = str(exc)
+            dl.error_message = str(exc)[:500]
             db.commit()
             return
 
         filename  = actual_url.split("/")[-1].split("?")[0] or f"file_{dl_id}"
-        safe_name = "".join(c if c.isalnum() or c in " _-" else "_" for c in list_name)
+        # Sanitise list name for use as a directory component
+        safe_name = (
+            "".join(c if c.isalnum() or c in " _-" else "_" for c in list_name)
+            .strip("_") or "default"
+        )
         output_path = os.path.join(base_path, safe_name, filename)
 
         dl.resolved_url = actual_url
         dl.filename     = filename
-        db.commit()
+        try:
+            db.commit()
+        except Exception as exc:
+            logger.error("DB commit failed for dl_id=%s: %s", dl_id, exc)
+            return  # actual_url is set but output_path might not be — bail out
+
     finally:
         db.close()
 
-    # DB sync callback — runs on every poll tick (~1 s) for this download
-    async def on_update(progress: dict) -> None:
-        def _write():
+    # Guard: if we returned early inside the try block, these may still be None
+    if actual_url is None or output_path is None:
+        return
+
+    # DB-sync callback — runs on every poll tick (~1 s) for this download
+    async def on_update(snap: dict) -> None:
+        def _write() -> None:
             db2 = SessionLocal()
             try:
                 d = db2.query(Download).filter(Download.id == dl_id).first()
-                if d:
-                    d.status           = progress["status"]
-                    d.bytes_downloaded = progress["bytes_downloaded"]
-                    d.total_bytes      = progress["total_bytes"]
-                    if progress.get("filename"):
-                        d.filename = progress["filename"]
-                    if progress["status"] == "completed":
-                        d.completed_at = datetime.utcnow()
-                    if progress.get("error"):
-                        d.error_message = progress["error"]
-                    db2.commit()
+                if not d:
+                    return  # download was deleted while running — ignore
+                d.status           = snap["status"]
+                d.bytes_downloaded = snap["bytes_downloaded"]
+                d.total_bytes      = snap["total_bytes"]
+                if snap.get("filename"):
+                    d.filename = snap["filename"]
+                if snap["status"] == "completed":
+                    d.completed_at = datetime.now(timezone.utc)  # BUG FIX: was utcnow()
+                if snap.get("error"):
+                    d.error_message = snap["error"][:500]        # BUG FIX: truncate
+                db2.commit()
+            except Exception as exc:
+                logger.error("on_update DB write failed for dl_id=%s: %s", dl_id, exc)
             finally:
                 db2.close()
 
         await asyncio.to_thread(_write)
 
-    await dm.enqueue(dl_id, actual_url, output_path, on_update)
+    try:
+        await dm.enqueue(dl_id, actual_url, output_path, on_update)
+    except Exception as exc:
+        logger.error("dm.enqueue failed for dl_id=%s: %s", dl_id, exc)
+        # Update DB so the UI shows 'failed' rather than hanging on 'queued'
+        def _mark_failed() -> None:
+            db2 = SessionLocal()
+            try:
+                d = db2.query(Download).filter(Download.id == dl_id).first()
+                if d:
+                    d.status = "failed"
+                    d.error_message = str(exc)[:500]
+                    db2.commit()
+            finally:
+                db2.close()
+        await asyncio.to_thread(_mark_failed)
 
 
 @app.post("/api/downloads/{dl_id}/start")
@@ -232,7 +293,13 @@ async def api_start(dl_id: int, db: Session = Depends(get_db)):
     dl = db.query(Download).filter(Download.id == dl_id).first()
     if not dl:
         raise HTTPException(404, "Download not found.")
-    if dl.status in ("downloading", "queued"):
+
+    # BUG FIX: check live aria2c cache status too, not only the (potentially
+    # stale) DB value, to prevent a double-start race.
+    live = dm.get_progress(dl_id)
+    effective_status = (live.get("status") if live else None) or dl.status
+
+    if effective_status in ("downloading", "queued"):
         raise HTTPException(400, "Already running.")
     if not dm.is_running:
         raise HTTPException(503, "aria2c is not running. See server logs.")
@@ -246,20 +313,23 @@ async def api_start(dl_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/api/downloads/{dl_id}/pause")
-def api_pause(dl_id: int):
-    dm.pause(dl_id)
+async def api_pause(dl_id: int):
+    # BUG FIX: was `def` — dm.pause() is now async, must be awaited.
+    await dm.pause(dl_id)
     return {"status": "paused"}
 
 
 @app.post("/api/downloads/{dl_id}/resume")
-def api_resume(dl_id: int):
-    dm.resume(dl_id)
+async def api_resume(dl_id: int):
+    # BUG FIX: was `def` — dm.resume() is now async, must be awaited.
+    await dm.resume(dl_id)
     return {"status": "resumed"}
 
 
 @app.post("/api/downloads/{dl_id}/stop")
-def api_stop(dl_id: int, db: Session = Depends(get_db)):
-    dm.stop(dl_id)
+async def api_stop(dl_id: int, db: Session = Depends(get_db)):
+    # BUG FIX: was `def` — dm.stop() is now async, must be awaited.
+    await dm.stop(dl_id)
     dl = db.query(Download).filter(Download.id == dl_id).first()
     if dl:
         dl.status = "pending"
@@ -268,17 +338,18 @@ def api_stop(dl_id: int, db: Session = Depends(get_db)):
 
 
 @app.delete("/api/downloads/{dl_id}")
-def api_delete_download(dl_id: int, db: Session = Depends(get_db)):
+async def api_delete_download(dl_id: int, db: Session = Depends(get_db)):
+    # BUG FIX: was `def` — dm.stop() is now async, must be awaited.
     dl = db.query(Download).filter(Download.id == dl_id).first()
     if not dl:
         raise HTTPException(404, "Download not found.")
-    dm.stop(dl_id)
+    await dm.stop(dl_id)
     db.delete(dl)
     db.commit()
     return {"status": "deleted"}
 
 
-# ── Settings ──────────────────────────────────────────────────────────────────
+# ── Settings ───────────────────────────────────────────────────────────────────
 
 @app.get("/api/settings")
 def api_get_settings(db: Session = Depends(get_db)):
@@ -295,15 +366,24 @@ async def api_update_settings(data: dict = Body(...), db: Session = Depends(get_
             db.add(Setting(key=key, value=str(value)))
     db.commit()
 
+    # BUG FIX: dm.set_max_concurrent() is now async — must be awaited.
+    # Also guard against non-integer values in the payload.
     if "max_concurrent" in data:
-        dm.set_max_concurrent(int(data["max_concurrent"]))
+        try:
+            await dm.set_max_concurrent(int(data["max_concurrent"]))
+        except (ValueError, TypeError):
+            pass
+
     if "connections_per_file" in data:
-        dm.set_connections_per_file(int(data["connections_per_file"]))
+        try:
+            dm.set_connections_per_file(int(data["connections_per_file"]))
+        except (ValueError, TypeError):
+            pass
 
     return {"status": "updated"}
 
 
-# ── Scraper ───────────────────────────────────────────────────────────────────
+# ── Scraper ────────────────────────────────────────────────────────────────────
 
 @app.post("/api/scrape/links")
 def api_scrape_links(data: ScrapeRequest, db: Session = Depends(get_db)):
@@ -328,7 +408,7 @@ async def api_scrape_search(query: str = "", page: int = 1):
         raise HTTPException(400, str(exc))
 
 
-# ── aria2c global status ──────────────────────────────────────────────────────
+# ── aria2c global status ───────────────────────────────────────────────────────
 
 @app.get("/api/status")
 async def api_status():
@@ -337,13 +417,9 @@ async def api_status():
 
 # ── WebSocket: live progress ───────────────────────────────────────────────────
 
-_ws_clients: list = []
-
-
 @app.websocket("/ws/progress")
 async def ws_progress(ws: WebSocket):
     await ws.accept()
-    _ws_clients.append(ws)
     try:
         while True:
             payload = {
@@ -353,11 +429,10 @@ async def ws_progress(ws: WebSocket):
             }
             await ws.send_json(payload)
             await asyncio.sleep(1)
-    except (WebSocketDisconnect, Exception):
+    except WebSocketDisconnect:
         pass
-    finally:
-        if ws in _ws_clients:
-            _ws_clients.remove(ws)
+    except Exception as exc:
+        logger.debug("WebSocket closed with error: %s", exc)
 
 
 # ── Serve frontend ─────────────────────────────────────────────────────────────
