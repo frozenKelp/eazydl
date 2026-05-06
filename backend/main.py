@@ -22,7 +22,7 @@ from urllib.parse import urlparse
 
 import requests
 from fastapi import Body, Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import Response
+from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -182,8 +182,11 @@ def api_proxy_image(url: str):
             timeout=10,
         )
         resp.raise_for_status()
-    except requests.RequestException as exc:
-        raise HTTPException(502, f"Could not load image: {exc}")
+    except requests.RequestException:
+        # If the server is behind a restrictive proxy/VPN, let the browser try
+        # the already-validated public image URL directly instead of showing a
+        # broken placeholder.
+        return RedirectResponse(url, status_code=307)
     media_type = resp.headers.get("content-type", "image/jpeg").split(";", 1)[0]
     if not media_type.startswith("image/"):
         raise HTTPException(400, "URL did not return an image.")

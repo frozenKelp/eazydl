@@ -9,6 +9,7 @@ Scraper module:
 
 import re
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 from urllib.parse import unquote, urljoin, urlparse
@@ -153,6 +154,125 @@ def _image_from_article(article, base_url: str) -> Optional[str]:
     return None
 
 
+GAME_CATEGORIES = {
+    "lossless repack",
+    "hypervisor bypass",
+    "switch emulated",
+}
+SKIP_CATEGORIES = {
+    "uncategorized",
+    "updates digest",
+}
+STOP_EXCERPT_MARKERS = (
+    "download mirrors",
+    "download mirror",
+    "filehoster:",
+    "backwards compatibility",
+    "problems during installation",
+    "selective download",
+)
+STOPWORDS = {"a", "an", "and", "for", "of", "the", "to", "with", "in", "on", "pc", "game"}
+
+
+def _article_categories(article) -> list[str]:
+    return [
+        node.get_text(" ", strip=True)
+        for node in article.select('.cat-links a, a[rel="category tag"]')
+    ]
+
+
+def _is_game_article(article) -> bool:
+    cats = {cat.lower() for cat in _article_categories(article)}
+    if cats & SKIP_CATEGORIES:
+        return False
+    return bool(cats & GAME_CATEGORIES)
+
+
+def _query_tokens(query: str) -> list[str]:
+    tokens = []
+    for raw in re.findall(r"[a-z0-9]+", query.lower()):
+        if raw in STOPWORDS or len(raw) < 2:
+            continue
+        # A tiny singularization handles queries like "assassin" vs "assassins"
+        # without fuzzy-matching unrelated words like "need" and "needy".
+        token = raw[:-1] if len(raw) > 4 and raw.endswith("s") else raw
+        tokens.append(token)
+    return tokens
+
+
+def _matches_query(title: str, query: str) -> bool:
+    tokens = _query_tokens(query)
+    if not tokens:
+        return True
+    normalized_title = " ".join(
+        token[:-1] if len(token) > 4 and token.endswith("s") else token
+        for token in re.findall(r"[a-z0-9]+", title.lower())
+    )
+    title_words = set(normalized_title.split())
+    return all(token in title_words or token in normalized_title for token in tokens)
+
+
+def _clean_excerpt(text: str) -> str:
+    text = re.sub(r"\s+", " ", text or " ").strip()
+    lower = text.lower()
+    cut_at = len(text)
+    for marker in STOP_EXCERPT_MARKERS:
+        idx = lower.find(marker)
+        if idx != -1:
+            cut_at = min(cut_at, idx)
+    text = text[:cut_at].strip(" -–—|\n\t")
+    text = re.sub(r"#\d+\s*", "", text)
+    return text[:260].rstrip(" ,;:-–—")
+
+
+def _excerpt_from_article(article) -> str:
+    content = article.find("div", class_="entry-content")
+    if not content:
+        return ""
+    # Prefer the first meaningful paragraph. FitGirl game posts put genres,
+    # companies, languages, and sizes there; download links come later.
+    for node in content.find_all(["p", "div"], recursive=False):
+        text = _clean_excerpt(node.get_text(" ", strip=True))
+        if len(text) > 30:
+            return text
+    return _clean_excerpt(content.get_text(" ", strip=True))
+
+
+def _enrich_game(game: Dict) -> Dict:
+    if game.get("image") and game.get("excerpt"):
+        return game
+    session = _get_session()
+    resp = session.get(game["url"], timeout=15)
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "html.parser")
+    article = soup.find("article") or soup
+    if not _is_game_article(article):
+        game["is_game"] = False
+        return game
+    if not game.get("image"):
+        game["image"] = _image_from_article(article, game["url"])
+    if not game.get("excerpt"):
+        game["excerpt"] = _excerpt_from_article(article)
+    game["categories"] = _article_categories(article)
+    game["is_game"] = True
+    return game
+
+
+def _enrich_games(games: list[Dict]) -> list[Dict]:
+    enriched: list[Optional[Dict]] = [None] * len(games)
+    with ThreadPoolExecutor(max_workers=min(6, max(1, len(games)))) as pool:
+        futures = {pool.submit(_enrich_game, dict(game)): idx for idx, game in enumerate(games)}
+        for future in as_completed(futures):
+            idx = futures[future]
+            try:
+                enriched[idx] = future.result()
+            except Exception:
+                # Keep the base search card rather than making the whole Browse
+                # request fail because one detail page timed out.
+                enriched[idx] = games[idx]
+    return [game for game in enriched if game and game.get("is_game", True)]
+
+
 def get_fuckingfast_downloads(game_url: str) -> List[Dict[str, Optional[str]]]:
     """
     Given a FitGirl game-page URL, return fuckingfast.co links plus the human
@@ -237,11 +357,12 @@ def resolve_fuckingfast_download(ff_url: str) -> str:
 def search_fitgirl(query: str = "", page: int = 1) -> List[Dict]:
     """
     Search FitGirl repacks or browse the homepage.
-    Returns a list of dicts: {title, url, image, excerpt}
+    Returns game-only dicts: {title, url, image, excerpt, categories}.
     """
     session = _get_session()
+    query = query.strip()
 
-    if query.strip():
+    if query:
         url = f"https://fitgirl-repacks.site/?s={requests.utils.quote(query)}"
     elif page > 1:
         url = f"https://fitgirl-repacks.site/page/{page}/"
@@ -254,7 +375,10 @@ def search_fitgirl(query: str = "", page: int = 1) -> List[Dict]:
     soup = BeautifulSoup(resp.text, "html.parser")
     games: List[Dict] = []
 
-    for article in soup.find_all("article", limit=24):
+    for article in soup.find_all("article", limit=32):
+        if not _is_game_article(article):
+            continue
+
         title_tag = article.find(["h1", "h2"], class_="entry-title")
         if not title_tag:
             continue
@@ -262,16 +386,26 @@ def search_fitgirl(query: str = "", page: int = 1) -> List[Dict]:
         if not link_tag:
             continue
 
-        title: str = link_tag.get_text(strip=True)
-        game_url: str = link_tag["href"]
-        image = _image_from_article(article, game_url)
+        title: str = link_tag.get_text(" ", strip=True)
+        if not _matches_query(title, query):
+            continue
 
-        # Short excerpt
-        content_div = article.find("div", class_="entry-content")
-        excerpt = ""
-        if content_div:
-            excerpt = content_div.get_text(" ", strip=True)[:220]
+        game_url: str = urljoin(url, link_tag["href"])
+        games.append({
+            "title": title,
+            "url": game_url,
+            "image": _image_from_article(article, game_url),
+            "excerpt": _excerpt_from_article(article),
+            "categories": _article_categories(article),
+            "is_game": True,
+        })
+        if len(games) >= 12:
+            break
 
-        games.append({"title": title, "url": game_url, "image": image, "excerpt": excerpt})
-
+    # Search result pages often omit thumbnails/excerpts, so hydrate those cards
+    # from their individual game pages. Homepage cards are already hydrated, but
+    # this also fills any missing fields there.
+    games = _enrich_games(games)
+    for game in games:
+        game.pop("is_game", None)
     return games
