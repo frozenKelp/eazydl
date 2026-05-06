@@ -71,12 +71,20 @@ function syncScaleLabel() {
   if (scale && label) label.textContent = `${scale.value}%`;
 }
 
+function previewScale() {
+  const scale = document.getElementById('interface_scale');
+  if (!scale) return;
+  syncScaleLabel();
+  const value = Math.max(85, Math.min(125, Number(scale.value || 100)));
+  document.documentElement.style.fontSize = `${14 * (value / 100)}px`;
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('settings-form').addEventListener('submit', saveSettings);
   document.querySelectorAll('[data-settings-tab]').forEach(btn => {
     btn.addEventListener('click', () => showPanel(btn.dataset.settingsTab));
   });
-  document.getElementById('interface_scale').addEventListener('input', syncScaleLabel);
+  document.getElementById('interface_scale').addEventListener('input', previewScale);
   API.onProgress(loadRuntime);
   showPanel('downloads');
   loadSettings();

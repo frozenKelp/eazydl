@@ -88,9 +88,9 @@ def init_db() -> None:
 
     db = SessionLocal()
     try:
-        # Reset any downloads stuck mid-flight from a previous crash/restart
+        # Reset downloads whose aria2 GIDs cannot survive a process restart.
         db.query(Download).filter(
-            Download.status.in_(["downloading", "queued"])
+            Download.status.in_(["downloading", "queued", "paused"])
         ).update({"status": "pending"}, synchronize_session=False)
 
         # BUG FIX: connections_per_file was missing — caused the settings UI

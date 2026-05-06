@@ -119,12 +119,12 @@ function renderLibraryCard(lst) {
     <div class="library-card-body">
       <h2 class="library-card-title" title="${esc(lst.name)}">${esc(lst.name)}</h2>
       <div class="library-card-meta">
-        <span>${p.completed}/${downloads.length} files</span>
-        <span>${p.pct.toFixed(0)}%</span>
+        <span data-card-files>${p.completed}/${downloads.length} files</span>
+        <span data-card-pct>${p.pct.toFixed(0)}%</span>
       </div>
-      <div class="progress-track"><div class="progress-fill" style="width:${Math.min(100, p.pct).toFixed(1)}%"></div></div>
+      <div class="progress-track"><div class="progress-fill" data-card-fill style="width:${Math.min(100, p.pct).toFixed(1)}%"></div></div>
       <div class="library-card-actions">
-        <button class="btn btn-primary btn-sm" data-action="toggle-game" type="button" ${action.disabled ? 'disabled' : ''}>${action.label}</button>
+        <button class="btn btn-primary btn-sm" data-action="toggle-game" data-card-action type="button" ${action.disabled ? 'disabled' : ''}>${action.label}</button>
         <button class="btn btn-ghost btn-sm" data-action="open-list" type="button">Details</button>
       </div>
     </div>
@@ -152,13 +152,13 @@ function renderDetail(lst) {
       </div>
       <h2 class="detail-title">${esc(lst.name)}</h2>
       <div class="detail-meta">
-        <span>${esc(total)}</span>
-        <span>${downloads.length} files</span>
-        <span>${p.pct.toFixed(0)}%</span>
+        <span data-detail-total>${esc(total)}</span>
+        <span data-detail-files>${downloads.length} files</span>
+        <span data-detail-pct>${p.pct.toFixed(0)}%</span>
       </div>
       <div class="detail-tags">${cats.map(c => `<span>${esc(c)}</span>`).join('')}</div>
       <p class="detail-description">${esc(description)}</p>
-      <button class="btn btn-primary btn-fw" data-action="toggle-game" type="button" ${action.disabled ? 'disabled' : ''}>${action.label}</button>
+      <button class="btn btn-primary btn-fw" data-action="toggle-game" data-detail-action type="button" ${action.disabled ? 'disabled' : ''}>${action.label}</button>
       ${lst.source_url ? `<a class="btn btn-ghost btn-fw" href="${esc(lst.source_url)}" target="_blank" rel="noopener">FitGirl page</a>` : ''}
       <button class="btn btn-danger btn-fw" data-action="delete-game" type="button">Delete</button>
     </aside>
@@ -166,13 +166,13 @@ function renderDetail(lst) {
       <div class="detail-toolbar">
         <div>
           <h3>Links</h3>
-          <span>${p.completed}/${downloads.length} complete</span>
+          <span data-detail-complete>${p.completed}/${downloads.length} complete</span>
         </div>
         <button class="btn btn-ghost btn-sm" data-action="refresh" type="button">Refresh</button>
       </div>
       <div class="detail-progress">
-        <div class="progress-track"><div class="progress-fill" style="width:${Math.min(100, p.pct).toFixed(1)}%"></div></div>
-        <div class="game-progress-labels"><span>${fmtBytes(p.downloaded)}</span><span>${total}</span></div>
+        <div class="progress-track"><div class="progress-fill" data-detail-fill style="width:${Math.min(100, p.pct).toFixed(1)}%"></div></div>
+        <div class="game-progress-labels"><span data-detail-downloaded>${fmtBytes(p.downloaded)}</span><span data-detail-total-label>${total}</span></div>
       </div>
       <div class="file-list">
         ${downloads.length ? downloads.map(renderFileRow).join('') : '<div class="empty-state"><p>No links found for this game.</p></div>'}
@@ -190,21 +190,21 @@ function renderFileRow(dl) {
   const showUrl = boolSetting(librarySettings.library_show_file_urls, true);
 
   return `<div class="file-row" data-dl-id="${dl.id}">
-    <span class="badge badge-${esc(dl.status)}">${esc(dl.status)}</span>
+    <span class="badge badge-${esc(dl.status)}" data-file-status>${esc(dl.status)}</span>
     <div class="file-main">
-      <div class="file-name" title="${esc(name)}">${esc(name)}</div>
+      <div class="file-name" data-file-name title="${esc(name)}">${esc(name)}</div>
       ${showUrl ? `<a class="file-url" href="${esc(dl.url)}" target="_blank" rel="noopener" title="${esc(dl.url)}">${esc(dl.url)}</a>` : ''}
     </div>
-    <div class="file-bar"><div class="progress-track"><div class="progress-fill ${fillClass}" style="width:${Math.min(100, pct).toFixed(1)}%"></div></div></div>
+    <div class="file-bar"><div class="progress-track"><div class="progress-fill ${fillClass}" data-file-fill style="width:${Math.min(100, pct).toFixed(1)}%"></div></div></div>
     <div class="file-details">
-      <span>${fmtBytes(dl.bytes_downloaded)} / ${fmtBytes(dl.total_bytes, 'Unknown')}</span>
-      <span>${dl.speed ? fmtSpeed(dl.speed) : '-'}</span>
+      <span data-file-bytes>${fmtBytes(dl.bytes_downloaded)} / ${fmtBytes(dl.total_bytes, 'Unknown')}</span>
+      <span data-file-speed>${dl.speed ? fmtSpeed(dl.speed) : '-'}</span>
     </div>
     <div class="file-actions">
-      <button class="btn btn-primary btn-xs" data-action="toggle-file" type="button" ${disabled}>${actionLabel}</button>
+      <button class="btn btn-primary btn-xs" data-action="toggle-file" data-file-action type="button" ${disabled}>${actionLabel}</button>
       <button class="btn btn-danger btn-xs" data-action="delete-file" type="button">Delete</button>
     </div>
-    ${dl.error_message ? `<div class="file-error">${esc(dl.error_message)}</div>` : ''}
+    <div class="file-error" data-file-error ${dl.error_message ? '' : 'hidden'}>${esc(dl.error_message || '')}</div>
   </div>`;
 }
 
@@ -214,6 +214,131 @@ function initials(name) {
 
 function filesFor(listId) {
   return (downloadsByList.get(listId) || []).map(mergedDownload);
+}
+
+function progressPct(dl) {
+  return dl.total_bytes ? (dl.bytes_downloaded || 0) / dl.total_bytes * 100 : (dl.progress || 0);
+}
+
+function statusClass(status) {
+  return String(status || 'pending').replace(/[^\w-]/g, '');
+}
+
+function fillClassForStatus(status) {
+  if (status === 'completed') return 'done';
+  if (status === 'failed') return 'error';
+  if (status === 'paused') return 'paused';
+  return '';
+}
+
+function setGameAction(button, action) {
+  if (!button) return;
+  button.textContent = action.label;
+  button.disabled = action.disabled;
+}
+
+function updateLibraryCard(lst) {
+  const card = document.querySelector(`.library-card[data-list-id="${lst.id}"]`);
+  if (!card) return;
+
+  const downloads = filesFor(lst.id);
+  const p = gameProgress(downloads);
+  const action = gameAction(downloads);
+  const total = p.total ? fmtBytes(p.total) : (lst.size || 'Unknown size');
+
+  const files = card.querySelector('[data-card-files]');
+  const pct = card.querySelector('[data-card-pct]');
+  const fill = card.querySelector('[data-card-fill]');
+  const chip = card.querySelector('.size-chip');
+
+  if (files) files.textContent = `${p.completed}/${downloads.length} files`;
+  if (pct) pct.textContent = `${p.pct.toFixed(0)}%`;
+  if (fill) fill.style.width = `${Math.min(100, p.pct).toFixed(1)}%`;
+  if (chip) chip.textContent = total;
+  setGameAction(card.querySelector('[data-card-action]'), action);
+}
+
+function updateFileRow(row, dl) {
+  const status = dl.status || 'pending';
+  const pct = progressPct(dl);
+  const name = dl.filename || dl.url.split('/').pop() || `Download #${dl.id}`;
+  const actionLabel = runningStatuses.has(status) ? 'Pause' : status === 'completed' ? 'Done' : 'Start';
+
+  const badge = row.querySelector('[data-file-status]');
+  const nameEl = row.querySelector('[data-file-name]');
+  const fill = row.querySelector('[data-file-fill]');
+  const bytes = row.querySelector('[data-file-bytes]');
+  const speed = row.querySelector('[data-file-speed]');
+  const action = row.querySelector('[data-file-action]');
+  const error = row.querySelector('[data-file-error]');
+
+  if (badge) {
+    badge.className = `badge badge-${statusClass(status)}`;
+    badge.textContent = status;
+  }
+  if (nameEl) {
+    nameEl.textContent = name;
+    nameEl.title = name;
+  }
+  if (fill) {
+    const fillClass = fillClassForStatus(status);
+    fill.className = `progress-fill ${fillClass}`.trim();
+    fill.style.width = `${Math.min(100, pct).toFixed(1)}%`;
+  }
+  if (bytes) {
+    bytes.textContent = `${fmtBytes(dl.bytes_downloaded)} / ${fmtBytes(dl.total_bytes, 'Unknown')}`;
+  }
+  if (speed) speed.textContent = dl.speed ? fmtSpeed(dl.speed) : '-';
+  if (action) {
+    action.textContent = actionLabel;
+    action.disabled = status === 'completed';
+  }
+  if (error) {
+    error.textContent = dl.error_message || '';
+    error.hidden = !dl.error_message;
+  }
+}
+
+function updateDetailView(lst) {
+  const detail = document.querySelector(`.library-detail[data-list-id="${lst.id}"]`);
+  if (!detail) return;
+
+  const downloads = filesFor(lst.id);
+  const byId = new Map(downloads.map(d => [d.id, d]));
+  const p = gameProgress(downloads);
+  const action = gameAction(downloads);
+  const total = p.total ? fmtBytes(p.total) : (lst.size || 'Unknown size');
+
+  const setText = (selector, value) => {
+    const el = detail.querySelector(selector);
+    if (el) el.textContent = value;
+  };
+
+  setText('[data-detail-total]', total);
+  setText('[data-detail-files]', `${downloads.length} files`);
+  setText('[data-detail-pct]', `${p.pct.toFixed(0)}%`);
+  setText('[data-detail-complete]', `${p.completed}/${downloads.length} complete`);
+  setText('[data-detail-downloaded]', fmtBytes(p.downloaded));
+  setText('[data-detail-total-label]', total);
+
+  const fill = detail.querySelector('[data-detail-fill]');
+  if (fill) fill.style.width = `${Math.min(100, p.pct).toFixed(1)}%`;
+  setGameAction(detail.querySelector('[data-detail-action]'), action);
+
+  detail.querySelectorAll('.file-row').forEach((row) => {
+    const dl = byId.get(Number(row.dataset.dlId));
+    if (dl) updateFileRow(row, dl);
+  });
+}
+
+function refreshLiveProgress() {
+  renderStats();
+  if (selectedListId) {
+    const selected = lists.find(l => l.id === selectedListId);
+    if (selected) updateDetailView(selected);
+    return;
+  }
+  lists.forEach(updateLibraryCard);
 }
 
 async function startOrResume(dl) {
@@ -328,7 +453,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   API.onProgress((msg) => {
     liveById = new Map((msg.data || []).map(d => [d.id, d]));
-    if (lists.length) renderLibrary();
+    if (lists.length) refreshLiveProgress();
   });
   loadLibrary();
 });

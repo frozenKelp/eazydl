@@ -55,6 +55,7 @@ class Aria2Manager:
     def __init__(self) -> None:
         self.api: Optional[aria2p.API] = None
         self._process: Optional[subprocess.Popen] = None
+        self._owns_process: bool = False
 
         # Bidirectional mapping: our DB ids ↔ aria2 GIDs
         self._gid_map: Dict[int, str] = {}   # dl_id  → aria2 GID
@@ -67,6 +68,7 @@ class Aria2Manager:
         self._cache: Dict[int, dict] = {}
 
         self._poll_task: Optional[asyncio.Task] = None
+        self._poll_failures: int = 0
         self.is_running: bool = False
         self.max_concurrent: int = 3
         self.connections_per_file: int = 4
@@ -82,6 +84,7 @@ class Aria2Manager:
         try:
             await asyncio.to_thread(test_api.get_stats)
             self.api = test_api
+            self._owns_process = False
             self.is_running = True
             self._poll_task = asyncio.create_task(self._poll_loop())
             logger.info("Reused existing aria2c daemon on port 6800.")
@@ -116,6 +119,7 @@ class Aria2Manager:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+        self._owns_process = True
 
         # Poll until the RPC endpoint is ready (up to 3 s / 15 × 200 ms)
         for _ in range(15):
@@ -126,6 +130,7 @@ class Aria2Manager:
                 )
                 await asyncio.to_thread(new_api.get_stats)
                 self.api = new_api
+                self._poll_failures = 0
                 self.is_running = True
                 self._poll_task = asyncio.create_task(self._poll_loop())
                 logger.info("aria2c subprocess started; RPC ready.")
@@ -137,6 +142,7 @@ class Aria2Manager:
         if self._process:
             self._process.terminate()
             self._process = None
+        self._owns_process = False
         raise RuntimeError("aria2c started but its RPC server timed out after 3 s.")
 
     async def shutdown(self) -> None:
@@ -152,18 +158,19 @@ class Aria2Manager:
                 pass
             self._poll_task = None
 
-        if self.api:
+        if self.api and self._owns_process:
             try:
                 await asyncio.to_thread(
                     self.api.client.call, "aria2.shutdown", []
                 )
             except Exception:
                 pass
-            self.api = None
+        self.api = None
 
         if self._process:
             self._process.terminate()
             self._process = None
+        self._owns_process = False
 
     # ── Poll loop ──────────────────────────────────────────────────────────────
 
@@ -173,13 +180,42 @@ class Aria2Manager:
             await asyncio.sleep(1)
             if not self.api:
                 continue
+            if self._process and self._process.poll() is not None:
+                self._mark_unavailable("aria2c subprocess exited")
+                return
             try:
                 await self._sync_all()
+                self._poll_failures = 0
             except asyncio.CancelledError:
                 raise  # let cancellation propagate cleanly
             except Exception as exc:
-                # BUG FIX: was bare `pass` — transient RPC errors now visible in logs.
-                logger.debug("Poll loop transient error: %s", exc)
+                self._poll_failures += 1
+                logger.warning(
+                    "Poll loop aria2c error (%s/3): %s",
+                    self._poll_failures,
+                    exc,
+                )
+                if self._poll_failures >= 3:
+                    self._mark_unavailable("aria2c RPC stopped responding")
+                    return
+
+    def _mark_unavailable(self, reason: str) -> None:
+        logger.warning("%s; marking aria2c offline.", reason)
+        self.is_running = False
+        self.api = None
+        self._poll_failures = 0
+        if self._process and self._owns_process and self._process.poll() is None:
+            self._process.terminate()
+            self._process = None
+            self._owns_process = False
+        if self._process and self._process.poll() is not None:
+            self._process = None
+            self._owns_process = False
+        for snap in self._cache.values():
+            if snap.get("status") in {"downloading", "queued"}:
+                snap["status"] = "failed"
+                snap["speed"] = 0
+                snap["error"] = reason
 
     async def _sync_all(self) -> None:
         all_dls = await asyncio.to_thread(self.api.get_downloads)
@@ -237,6 +273,8 @@ class Aria2Manager:
         """
         if not self.api:
             raise RuntimeError("aria2c is not running. Check server logs.")
+        if dl_id in self._gid_map:
+            raise RuntimeError("Download is already queued in aria2c.")
 
         out_dir = os.path.dirname(output_path) or "."
         os.makedirs(out_dir, exist_ok=True)
@@ -368,7 +406,9 @@ class Aria2Manager:
                 "num_waiting":    s.num_waiting,
                 "num_stopped":    s.num_stopped_total,
             }
-        except Exception:
+        except Exception as exc:
+            logger.warning("aria2c stats unavailable: %s", exc)
+            self._mark_unavailable("aria2c stats request failed")
             return {"aria2_running": False}
 
 

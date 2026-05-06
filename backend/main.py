@@ -15,6 +15,7 @@ import os
 import re as _re
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from time import monotonic
 from typing import List, Optional
 from ipaddress import ip_address, ip_network
 from socket import getaddrinfo
@@ -41,6 +42,48 @@ logger = logging.getLogger(__name__)
 FRONTEND_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "frontend")
 )
+MAX_IMAGE_BYTES = 8 * 1024 * 1024
+PROGRESS_DB_WRITE_INTERVAL = 5.0
+
+ALLOWED_SETTINGS = {
+    "download_path",
+    "max_concurrent",
+    "connections_per_file",
+    "auto_start_new_games",
+    "browse_items_per_page",
+    "browse_card_size",
+    "browse_show_descriptions",
+    "browse_open_links_new_tab",
+    "library_card_size",
+    "library_default_detail",
+    "library_show_file_urls",
+    "confirm_delete",
+    "interface_scale",
+    "theme_density",
+    "reduce_motion",
+}
+INT_SETTING_RANGES = {
+    "max_concurrent": (1, 32),
+    "connections_per_file": (1, 16),
+    "browse_items_per_page": (6, 60),
+    "interface_scale": (85, 125),
+}
+CHOICE_SETTINGS = {
+    "browse_card_size": {"compact", "medium", "large"},
+    "library_card_size": {"compact", "medium", "large"},
+    "theme_density": {"compact", "comfortable", "spacious"},
+}
+BOOL_SETTINGS = {
+    "auto_start_new_games",
+    "browse_show_descriptions",
+    "browse_open_links_new_tab",
+    "library_default_detail",
+    "library_show_file_urls",
+    "confirm_delete",
+    "reduce_motion",
+}
+_starting_downloads: set[int] = set()
+_starting_lock = asyncio.Lock()
 
 
 # ── Static file helper ─────────────────────────────────────────────────────────
@@ -155,6 +198,14 @@ PRIVATE_NETS = tuple(
 )
 
 
+def _is_private_address(value: str) -> bool:
+    try:
+        addr = ip_address(value)
+    except ValueError:
+        return True
+    return any(addr in net for net in PRIVATE_NETS)
+
+
 def _is_public_image_url(raw_url: str) -> bool:
     parsed = urlparse(raw_url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
@@ -164,6 +215,37 @@ def _is_public_image_url(raw_url: str) -> bool:
     except OSError:
         return False
     return not any(any(addr in net for net in PRIVATE_NETS) for addr in addresses)
+
+
+def _response_peer_is_public(resp: requests.Response) -> bool:
+    try:
+        conn = getattr(resp.raw, "_connection", None)
+        sock = getattr(conn, "sock", None) if conn else None
+        if not sock:
+            sock = getattr(
+                getattr(getattr(resp.raw, "_fp", None), "fp", None),
+                "raw",
+                None,
+            )
+            sock = getattr(sock, "_sock", None)
+        if not sock:
+            return False
+        return not _is_private_address(sock.getpeername()[0])
+    except OSError:
+        return False
+
+
+def _read_limited_content(resp: requests.Response) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    for chunk in resp.iter_content(chunk_size=64 * 1024):
+        if not chunk:
+            continue
+        total += len(chunk)
+        if total > MAX_IMAGE_BYTES:
+            raise HTTPException(413, "Image is too large.")
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 @app.get("/api/image")
@@ -183,18 +265,28 @@ def api_proxy_image(url: str):
                     "Chrome/131.0.0.0 Safari/537.36"
                 ),
             },
+            allow_redirects=False,
+            stream=True,
             timeout=10,
         )
-        resp.raise_for_status()
+        with resp:
+            if 300 <= resp.status_code < 400:
+                return RedirectResponse(url, status_code=307)
+            if not _response_peer_is_public(resp):
+                raise HTTPException(400, "Image host resolved to a private address.")
+            resp.raise_for_status()
+            media_type = resp.headers.get("content-type", "image/jpeg").split(";", 1)[0]
+            if not media_type.startswith("image/"):
+                raise HTTPException(400, "URL did not return an image.")
+            return Response(
+                content=_read_limited_content(resp),
+                media_type=media_type,
+            )
     except requests.RequestException:
         # If the server is behind a restrictive proxy/VPN, let the browser try
         # the already-validated public image URL directly instead of showing a
         # broken placeholder.
         return RedirectResponse(url, status_code=307)
-    media_type = resp.headers.get("content-type", "image/jpeg").split(";", 1)[0]
-    if not media_type.startswith("image/"):
-        raise HTTPException(400, "URL did not return an image.")
-    return Response(content=resp.content, media_type=media_type)
 
 # ── Lists ──────────────────────────────────────────────────────────────────────
 
@@ -283,11 +375,16 @@ def api_get_downloads(list_id: int, db: Session = Depends(get_db)):
 def api_add_links(list_id: int, data: LinksAdd, db: Session = Depends(get_db)):
     if not db.query(LinkList).filter(LinkList.id == list_id).first():
         raise HTTPException(404, "List not found.")
+    existing = {
+        url
+        for (url,) in db.query(Download.source_url).filter(Download.list_id == list_id).all()
+    }
     added = 0
     for url in data.urls:
         url = url.strip()
-        if url:
+        if url and url not in existing:
             db.add(Download(list_id=list_id, source_url=url, status="pending"))
+            existing.add(url)
             added += 1
     db.commit()
     return {"added": added}
@@ -360,90 +457,116 @@ def api_add_game(data: GameAdd, db: Session = Depends(get_db)):
 
 # ── Downloads ──────────────────────────────────────────────────────────────────
 
+async def _release_starting_download(dl_id: int) -> None:
+    async with _starting_lock:
+        _starting_downloads.discard(dl_id)
+
+
+async def _mark_download_failed(dl_id: int, message: str) -> None:
+    def _write() -> None:
+        db = SessionLocal()
+        try:
+            dl = db.query(Download).filter(Download.id == dl_id).first()
+            if dl:
+                dl.status = "failed"
+                dl.error_message = message[:500]
+                db.commit()
+        finally:
+            db.close()
+    await asyncio.to_thread(_write)
+
+
 async def _resolve_and_start(dl_id: int, base_path: str, list_name: str) -> None:
     actual_url:  Optional[str] = None
     output_path: Optional[str] = None
+    last_db_write = 0.0
 
-    db = SessionLocal()
     try:
-        dl = db.query(Download).filter(Download.id == dl_id).first()
-        if not dl:
-            return
-        dl.status = "queued"
-        db.commit()
-
+        db = SessionLocal()
         try:
-            resolved = await asyncio.to_thread(
-                resolve_fuckingfast_download_info, dl.source_url
-            )
-        except Exception as exc:
-            dl.status = "failed"
-            dl.error_message = str(exc)[:500]
-            db.commit()
-            return
+            dl = db.query(Download).filter(Download.id == dl_id).first()
+            if not dl:
+                return
 
-        actual_url = resolved.url
-        filename = (
-            clean_filename(dl.filename)
-            or clean_filename(resolved.filename)
-            or clean_filename(actual_url)
-            or f"file_{dl_id}"
-        )
-        safe_name = (
-            "".join(c if c.isalnum() or c in " _-" else "_" for c in list_name)
-            .strip("_") or "default"
-        )
-        output_path = os.path.join(base_path, safe_name, filename)
-
-        dl.resolved_url = actual_url
-        dl.filename     = filename
-        try:
-            db.commit()
-        except Exception:
-            return
-    finally:
-        db.close()
-
-    if actual_url is None or output_path is None:
-        return
-
-    async def on_update(snap: dict) -> None:
-        def _write() -> None:
-            db2 = SessionLocal()
             try:
-                d = db2.query(Download).filter(Download.id == dl_id).first()
-                if not d:
-                    return
-                d.status           = snap["status"]
-                d.bytes_downloaded = snap["bytes_downloaded"]
-                d.total_bytes      = snap["total_bytes"]
-                if snap_name := clean_filename(snap.get("filename")):
-                    d.filename = snap_name
-                if snap["status"] == "completed":
-                    d.completed_at = datetime.now(timezone.utc)
-                if snap.get("error"):
-                    d.error_message = snap["error"][:500]
-                db2.commit()
+                resolved = await asyncio.to_thread(
+                    resolve_fuckingfast_download_info, dl.source_url
+                )
             except Exception as exc:
-                logger.error("on_update DB write failed for dl_id=%s: %s", dl_id, exc)
-            finally:
-                db2.close()
-        await asyncio.to_thread(_write)
+                dl.status = "failed"
+                dl.error_message = str(exc)[:500]
+                db.commit()
+                return
 
-    try:
-        await dm.enqueue(dl_id, actual_url, output_path, on_update)
-    except Exception as exc:
-        def _mark_failed() -> None:
-            db2 = SessionLocal()
+            actual_url = resolved.url
+            filename = (
+                clean_filename(dl.filename)
+                or clean_filename(resolved.filename)
+                or clean_filename(actual_url)
+                or f"file_{dl_id}"
+            )
+            safe_name = (
+                "".join(c if c.isalnum() or c in " _-" else "_" for c in list_name)
+                .strip("_") or "default"
+            )
+            output_path = os.path.join(base_path, safe_name, filename)
+
+            dl.resolved_url = actual_url
+            dl.filename = filename
             try:
-                d = db2.query(Download).filter(Download.id == dl_id).first()
-                if d:
-                    d.status = "failed"
-                    d.error_message = str(exc)[:500]
+                db.commit()
+            except Exception as exc:
+                logger.error("Failed to persist resolved dl_id=%s: %s", dl_id, exc)
+                return
+        finally:
+            db.close()
+
+        if actual_url is None or output_path is None:
+            return
+
+        async def on_update(snap: dict) -> None:
+            nonlocal last_db_write
+            now = monotonic()
+            status = snap.get("status")
+            should_write = (
+                status in {"completed", "failed", "paused"}
+                or now - last_db_write >= PROGRESS_DB_WRITE_INTERVAL
+            )
+            if not should_write:
+                return
+            last_db_write = now
+
+            def _write() -> None:
+                db2 = SessionLocal()
+                try:
+                    d = db2.query(Download).filter(Download.id == dl_id).first()
+                    if not d:
+                        return
+                    d.status = snap["status"]
+                    d.bytes_downloaded = snap["bytes_downloaded"]
+                    d.total_bytes = snap["total_bytes"]
+                    if snap_name := clean_filename(snap.get("filename")):
+                        d.filename = snap_name
+                    if snap["status"] == "completed":
+                        d.completed_at = datetime.now(timezone.utc)
+                    if snap.get("error"):
+                        d.error_message = snap["error"][:500]
                     db2.commit()
-            finally:
-                db2.close()
-        await asyncio.to_thread(_mark_failed)
+                except Exception as exc:
+                    logger.error("on_update DB write failed for dl_id=%s: %s", dl_id, exc)
+                finally:
+                    db2.close()
+            await asyncio.to_thread(_write)
+
+        try:
+            await dm.enqueue(dl_id, actual_url, output_path, on_update)
+        except Exception as exc:
+            await _mark_download_failed(dl_id, str(exc))
+    except Exception as exc:
+        logger.exception("Unexpected start task failure for dl_id=%s", dl_id)
+        await _mark_download_failed(dl_id, str(exc))
+    finally:
+        await _release_starting_download(dl_id)
 
 
 @app.post("/api/downloads/{dl_id}/start")
@@ -451,12 +574,19 @@ async def api_start(dl_id: int, db: Session = Depends(get_db)):
     dl = db.query(Download).filter(Download.id == dl_id).first()
     if not dl:
         raise HTTPException(404, "Download not found.")
-    live = dm.get_progress(dl_id)
-    effective_status = (live.get("status") if live else None) or dl.status
-    if effective_status in ("downloading", "queued"):
-        raise HTTPException(400, "Already running.")
     if not dm.is_running:
         raise HTTPException(503, "aria2c is not running. See server logs.")
+
+    async with _starting_lock:
+        live = dm.get_progress(dl_id)
+        effective_status = (live.get("status") if live else None) or dl.status
+        if dl_id in _starting_downloads or effective_status in ("downloading", "queued"):
+            raise HTTPException(400, "Already running.")
+        dl.status = "queued"
+        dl.error_message = None
+        db.commit()
+        _starting_downloads.add(dl_id)
+
     s = {row.key: row.value for row in db.query(Setting).all()}
     base_path = s.get("download_path", "downloads")
     list_name = dl.link_list.name if dl.link_list else "default"
@@ -465,13 +595,20 @@ async def api_start(dl_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/api/downloads/{dl_id}/pause")
-async def api_pause(dl_id: int):
+async def api_pause(dl_id: int, db: Session = Depends(get_db)):
+    dl = db.query(Download).filter(Download.id == dl_id).first()
+    if not dl:
+        raise HTTPException(404, "Download not found.")
     await dm.pause(dl_id)
+    dl.status = "paused"
+    db.commit()
     return {"status": "paused"}
 
 
 @app.post("/api/downloads/{dl_id}/resume")
-async def api_resume(dl_id: int):
+async def api_resume(dl_id: int, db: Session = Depends(get_db)):
+    if not db.query(Download).filter(Download.id == dl_id).first():
+        raise HTTPException(404, "Download not found.")
     await dm.resume(dl_id)
     return {"status": "resumed"}
 
@@ -504,27 +641,76 @@ def api_get_settings(db: Session = Depends(get_db)):
     return {s.key: s.value for s in db.query(Setting).all()}
 
 
+def _normalize_bool_setting(value) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return "true"
+    if text in {"0", "false", "no", "off"}:
+        return "false"
+    raise ValueError("expected boolean")
+
+
+def _normalize_settings(data: dict) -> dict[str, str]:
+    if not isinstance(data, dict):
+        raise HTTPException(400, "Settings payload must be an object.")
+    unknown = sorted(set(data) - ALLOWED_SETTINGS)
+    if unknown:
+        raise HTTPException(400, f"Unsupported setting(s): {', '.join(unknown)}")
+
+    normalized: dict[str, str] = {}
+    for key, value in data.items():
+        if key in INT_SETTING_RANGES:
+            try:
+                number = int(value)
+            except (TypeError, ValueError):
+                raise HTTPException(400, f"{key} must be an integer.")
+            low, high = INT_SETTING_RANGES[key]
+            if not low <= number <= high:
+                raise HTTPException(400, f"{key} must be between {low} and {high}.")
+            normalized[key] = str(number)
+            continue
+
+        if key in BOOL_SETTINGS:
+            try:
+                normalized[key] = _normalize_bool_setting(value)
+            except ValueError:
+                raise HTTPException(400, f"{key} must be a boolean.")
+            continue
+
+        if key in CHOICE_SETTINGS:
+            text = str(value).strip()
+            if text not in CHOICE_SETTINGS[key]:
+                allowed = ", ".join(sorted(CHOICE_SETTINGS[key]))
+                raise HTTPException(400, f"{key} must be one of: {allowed}.")
+            normalized[key] = text
+            continue
+
+        text = str(value).strip()
+        if key == "download_path" and not text:
+            raise HTTPException(400, "download_path cannot be empty.")
+        normalized[key] = text
+
+    return normalized
+
+
 @app.put("/api/settings")
 async def api_update_settings(data: dict = Body(...), db: Session = Depends(get_db)):
-    for key, value in data.items():
+    normalized = _normalize_settings(data)
+    for key, value in normalized.items():
         s = db.query(Setting).filter(Setting.key == key).first()
         if s:
-            s.value = str(value)
+            s.value = value
         else:
-            db.add(Setting(key=key, value=str(value)))
+            db.add(Setting(key=key, value=value))
     db.commit()
 
-    if "max_concurrent" in data:
-        try:
-            await dm.set_max_concurrent(int(data["max_concurrent"]))
-        except (ValueError, TypeError):
-            pass
+    if "max_concurrent" in normalized:
+        await dm.set_max_concurrent(int(normalized["max_concurrent"]))
 
-    if "connections_per_file" in data:
-        try:
-            dm.set_connections_per_file(int(data["connections_per_file"]))
-        except (ValueError, TypeError):
-            pass
+    if "connections_per_file" in normalized:
+        dm.set_connections_per_file(int(normalized["connections_per_file"]))
 
     return {"status": "updated"}
 
@@ -539,10 +725,18 @@ def api_scrape_links(data: ScrapeRequest, db: Session = Depends(get_db)):
         links = get_fuckingfast_links(data.game_url)
     except Exception as exc:
         raise HTTPException(400, str(exc))
+    existing = {
+        url
+        for (url,) in db.query(Download.source_url).filter(Download.list_id == data.list_id).all()
+    }
+    added = 0
     for url in links:
-        db.add(Download(list_id=data.list_id, source_url=url, status="pending"))
+        if url not in existing:
+            db.add(Download(list_id=data.list_id, source_url=url, status="pending"))
+            existing.add(url)
+            added += 1
     db.commit()
-    return {"found": len(links), "added": len(links), "links": links}
+    return {"found": len(links), "added": added, "links": links}
 
 
 @app.get("/api/scrape/search")

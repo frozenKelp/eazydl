@@ -22,7 +22,7 @@ async function loadBrowse(query = currentQuery, page = currentPage) {
   currentPage = Math.max(1, page);
 
   const root = document.getElementById('browse-results');
-  root.innerHTML = `<div class="loading"><span class="spinner"></span> ${query ? 'Searching' : 'Loading popular repacks'}...</div>`;
+  root.innerHTML = `<div class="loading"><span class="spinner"></span> ${query ? 'Searching' : 'Loading popular this year'}...</div>`;
 
   await refreshKnownTitles();
   const params = new URLSearchParams({
@@ -39,7 +39,7 @@ async function loadBrowse(query = currentQuery, page = currentPage) {
       <div class="empty-state">
         <div class="empty-icon">Search</div>
         <h3>No games found</h3>
-        <p>Try another search or return to Popular.</p>
+        <p>Try another search or return to Popular This Year.</p>
       </div>
       ${renderPager(false)}`;
     bindPager(games.length);
