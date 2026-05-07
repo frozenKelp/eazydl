@@ -4,13 +4,19 @@ let liveById = new Map();
 let selectedListId = null;
 let librarySettings = { ...SETTINGS_DEFAULTS };
 
-const statusOrder = ['downloading', 'queued', 'paused', 'failed', 'pending', 'completed'];
 const runningStatuses = new Set(['downloading', 'queued']);
 const startableStatuses = new Set(['pending', 'failed']);
 
 function mergedDownload(dl) {
   const live = liveById.get(dl.id) || {};
-  return { ...dl, ...live, status: live.status || dl.status };
+  return {
+    ...dl,
+    ...live,
+    url: dl.url,
+    filename: live.filename || dl.filename || '',
+    status: live.status || dl.status,
+    error_message: live.error || live.error_message || dl.error_message || '',
+  };
 }
 
 function proxiedImage(url) {
@@ -26,15 +32,11 @@ async function loadLibrarySettings() {
 async function loadLibrary() {
   const root = document.getElementById('library');
   root.innerHTML = '<div class="loading"><span class="spinner"></span> Loading library...</div>';
-  const data = await API.req('/api/lists');
+  const data = await API.req('/api/library');
   if (!data) return;
-  lists = data;
+  lists = data.lists || [];
   downloadsByList = new Map();
-
-  await Promise.all(lists.map(async (lst) => {
-    const dls = await API.req(`/api/lists/${lst.id}/downloads`);
-    if (dls) downloadsByList.set(lst.id, dls);
-  }));
+  lists.forEach((lst) => downloadsByList.set(lst.id, lst.downloads || []));
 
   if (selectedListId && !lists.some(l => l.id === selectedListId)) selectedListId = null;
   if (!selectedListId && boolSetting(librarySettings.library_default_detail) && lists.length) {
@@ -61,20 +63,30 @@ function renderStats() {
 }
 
 function gameProgress(downloads) {
-  if (!downloads.length) return { pct: 0, downloaded: 0, total: 0, completed: 0 };
+  if (!downloads.length) return { pct: 0, downloaded: 0, total: 0, completed: 0, allSized: false };
   const merged = downloads.map(mergedDownload);
   const total = merged.reduce((s, d) => s + (d.total_bytes || 0), 0);
   const downloaded = merged.reduce((s, d) => s + (d.bytes_downloaded || 0), 0);
   const completed = merged.filter(d => d.status === 'completed').length;
-  const pct = total ? downloaded / total * 100 : completed / downloads.length * 100;
-  return { pct, downloaded, total, completed };
+  const allSized = merged.every(d => d.total_bytes > 0);
+  const pct = allSized && total ? downloaded / total * 100 : completed / downloads.length * 100;
+  return { pct, downloaded, total, completed, allSized };
 }
 
 function gameAction(downloads) {
   const merged = downloads.map(mergedDownload);
   if (merged.some(d => runningStatuses.has(d.status))) return { label: 'Pause', disabled: false };
-  if (merged.some(d => d.status === 'paused' || startableStatuses.has(d.status))) return { label: 'Start', disabled: false };
+  if (merged.some(d => d.status === 'failed')) return { label: 'Retry', disabled: false };
+  if (merged.some(d => d.status === 'paused')) return { label: 'Resume', disabled: false };
+  if (merged.some(d => startableStatuses.has(d.status))) return { label: 'Start', disabled: false };
   return { label: 'Done', disabled: true };
+}
+
+function gameDisplaySize(lst, progress) {
+  if (lst.size) return String(lst.size).replace(/^from\s+/i, '');
+  if (progress.allSized && progress.total) return fmtBytes(progress.total);
+  if (progress.total) return `Known ${fmtBytes(progress.total)}`;
+  return 'Unknown size';
 }
 
 function renderLibrary() {
@@ -107,7 +119,7 @@ function renderLibraryCard(lst) {
   const p = gameProgress(downloads);
   const action = gameAction(downloads);
   const image = proxiedImage(lst.image_url);
-  const total = p.total ? fmtBytes(p.total) : (lst.size || 'Unknown size');
+  const total = gameDisplaySize(lst, p);
 
   return `<article class="library-card" data-action="open-list" data-list-id="${lst.id}" tabindex="0">
     <div class="library-cover-wrap">
@@ -125,7 +137,6 @@ function renderLibraryCard(lst) {
       <div class="progress-track"><div class="progress-fill" data-card-fill style="width:${Math.min(100, p.pct).toFixed(1)}%"></div></div>
       <div class="library-card-actions">
         <button class="btn btn-primary btn-sm" data-action="toggle-game" data-card-action type="button" ${action.disabled ? 'disabled' : ''}>${action.label}</button>
-        <button class="btn btn-ghost btn-sm" data-action="open-list" type="button">Details</button>
       </div>
     </div>
   </article>`;
@@ -133,18 +144,17 @@ function renderLibraryCard(lst) {
 
 function renderDetail(lst) {
   const downloads = (downloadsByList.get(lst.id) || [])
-    .map(mergedDownload)
-    .sort((a, b) => statusOrder.indexOf(a.status) - statusOrder.indexOf(b.status));
+    .map(mergedDownload);
   const p = gameProgress(downloads);
   const action = gameAction(downloads);
   const image = proxiedImage(lst.image_url);
   const cats = (lst.categories || []).slice(0, 6);
-  const total = p.total ? fmtBytes(p.total) : (lst.size || 'Unknown size');
+  const total = gameDisplaySize(lst, p);
   const description = lst.description || 'No description saved yet.';
 
   return `<section class="library-detail" data-list-id="${lst.id}">
     <aside class="detail-side">
-      <button class="back-link" data-action="back" type="button">Back</button>
+      <button class="back-link" data-action="back" type="button">&larr; Back</button>
       <div class="detail-cover-wrap">
         ${image
           ? `<img class="detail-cover" src="${esc(image)}" alt="" referrerpolicy="no-referrer">`
@@ -168,7 +178,10 @@ function renderDetail(lst) {
           <h3>Links</h3>
           <span data-detail-complete>${p.completed}/${downloads.length} complete</span>
         </div>
-        <button class="btn btn-ghost btn-sm" data-action="refresh" type="button">Refresh</button>
+        <div class="detail-toolbar-actions">
+          <button class="btn btn-primary btn-sm" data-action="toggle-game" data-detail-toolbar-action type="button" ${action.disabled ? 'disabled' : ''}>${action.label} All</button>
+          <button class="btn btn-ghost btn-sm" data-action="refresh" type="button">Refresh</button>
+        </div>
       </div>
       <div class="detail-progress">
         <div class="progress-track"><div class="progress-fill" data-detail-fill style="width:${Math.min(100, p.pct).toFixed(1)}%"></div></div>
@@ -185,7 +198,15 @@ function renderFileRow(dl) {
   const pct = dl.total_bytes ? (dl.bytes_downloaded || 0) / dl.total_bytes * 100 : (dl.progress || 0);
   const fillClass = dl.status === 'completed' ? 'done' : dl.status === 'failed' ? 'error' : dl.status === 'paused' ? 'paused' : '';
   const name = dl.filename || dl.url.split('/').pop() || `Download #${dl.id}`;
-  const actionLabel = runningStatuses.has(dl.status) ? 'Pause' : dl.status === 'completed' ? 'Done' : 'Start';
+  const actionLabel = runningStatuses.has(dl.status)
+    ? 'Pause'
+    : dl.status === 'completed'
+      ? 'Done'
+      : dl.status === 'paused'
+        ? 'Resume'
+        : dl.status === 'failed'
+          ? 'Retry'
+          : 'Start';
   const disabled = dl.status === 'completed' ? 'disabled' : '';
   const showUrl = boolSetting(librarySettings.library_show_file_urls, true);
 
@@ -193,7 +214,7 @@ function renderFileRow(dl) {
     <span class="badge badge-${esc(dl.status)}" data-file-status>${esc(dl.status)}</span>
     <div class="file-main">
       <div class="file-name" data-file-name title="${esc(name)}">${esc(name)}</div>
-      ${showUrl ? `<a class="file-url" href="${esc(dl.url)}" target="_blank" rel="noopener" title="${esc(dl.url)}">${esc(dl.url)}</a>` : ''}
+      ${showUrl ? `<button class="file-url file-url-button" data-action="open-file-url" data-url="${esc(dl.url)}" type="button" title="Open source link">${esc(dl.url)}</button>` : ''}
     </div>
     <div class="file-bar"><div class="progress-track"><div class="progress-fill ${fillClass}" data-file-fill style="width:${Math.min(100, pct).toFixed(1)}%"></div></div></div>
     <div class="file-details">
@@ -214,6 +235,15 @@ function initials(name) {
 
 function filesFor(listId) {
   return (downloadsByList.get(listId) || []).map(mergedDownload);
+}
+
+function patchDownloads(ids, patch) {
+  const wanted = new Set(ids);
+  downloadsByList.forEach((rows) => {
+    rows.forEach((row) => {
+      if (wanted.has(row.id)) Object.assign(row, patch);
+    });
+  });
 }
 
 function progressPct(dl) {
@@ -237,6 +267,12 @@ function setGameAction(button, action) {
   button.disabled = action.disabled;
 }
 
+function setToolbarAction(button, action) {
+  if (!button) return;
+  button.textContent = `${action.label} All`;
+  button.disabled = action.disabled;
+}
+
 function updateLibraryCard(lst) {
   const card = document.querySelector(`.library-card[data-list-id="${lst.id}"]`);
   if (!card) return;
@@ -244,7 +280,7 @@ function updateLibraryCard(lst) {
   const downloads = filesFor(lst.id);
   const p = gameProgress(downloads);
   const action = gameAction(downloads);
-  const total = p.total ? fmtBytes(p.total) : (lst.size || 'Unknown size');
+  const total = gameDisplaySize(lst, p);
 
   const files = card.querySelector('[data-card-files]');
   const pct = card.querySelector('[data-card-pct]');
@@ -262,7 +298,15 @@ function updateFileRow(row, dl) {
   const status = dl.status || 'pending';
   const pct = progressPct(dl);
   const name = dl.filename || dl.url.split('/').pop() || `Download #${dl.id}`;
-  const actionLabel = runningStatuses.has(status) ? 'Pause' : status === 'completed' ? 'Done' : 'Start';
+  const actionLabel = runningStatuses.has(status)
+    ? 'Pause'
+    : status === 'completed'
+      ? 'Done'
+      : status === 'paused'
+        ? 'Resume'
+        : status === 'failed'
+          ? 'Retry'
+          : 'Start';
 
   const badge = row.querySelector('[data-file-status]');
   const nameEl = row.querySelector('[data-file-name]');
@@ -307,7 +351,7 @@ function updateDetailView(lst) {
   const byId = new Map(downloads.map(d => [d.id, d]));
   const p = gameProgress(downloads);
   const action = gameAction(downloads);
-  const total = p.total ? fmtBytes(p.total) : (lst.size || 'Unknown size');
+  const total = gameDisplaySize(lst, p);
 
   const setText = (selector, value) => {
     const el = detail.querySelector(selector);
@@ -324,6 +368,7 @@ function updateDetailView(lst) {
   const fill = detail.querySelector('[data-detail-fill]');
   if (fill) fill.style.width = `${Math.min(100, p.pct).toFixed(1)}%`;
   setGameAction(detail.querySelector('[data-detail-action]'), action);
+  setToolbarAction(detail.querySelector('[data-detail-toolbar-action]'), action);
 
   detail.querySelectorAll('.file-row').forEach((row) => {
     const dl = byId.get(Number(row.dataset.dlId));
@@ -358,20 +403,35 @@ async function toggleGame(listId) {
   const files = filesFor(listId);
   const running = files.filter(d => runningStatuses.has(d.status));
   if (running.length) {
-    for (const dl of running) await API.req(`/api/downloads/${dl.id}/pause`, 'POST');
-    toast(`Paused ${running.length} file(s)`, 'ok');
-    setTimeout(loadLibrary, 500);
+    const ids = running.map(d => d.id);
+    const ok = await API.req('/api/downloads/batch/pause', 'POST', { ids });
+    if (ok) {
+      patchDownloads(ids, { status: 'paused', speed: 0 });
+      refreshLiveProgress();
+      toast(`Paused ${running.length} file(s)`, 'ok');
+    }
     return;
   }
 
-  const actionable = files.filter(d => d.status === 'paused' || startableStatuses.has(d.status));
+  const paused = files.filter(d => d.status === 'paused');
+  const startable = files.filter(d => startableStatuses.has(d.status));
+  const actionable = [...paused, ...startable];
   if (!actionable.length) {
     toast('No files need starting', 'info');
     return;
   }
-  for (const dl of actionable) await startOrResume(dl);
-  toast(`Started ${actionable.length} file(s)`, 'ok');
-  setTimeout(loadLibrary, 500);
+  if (paused.length) {
+    const ids = paused.map(d => d.id);
+    await API.req('/api/downloads/batch/resume', 'POST', { ids });
+    patchDownloads(ids, { status: 'downloading' });
+  }
+  if (startable.length) {
+    const ids = startable.map(d => d.id);
+    await API.req('/api/downloads/batch/start', 'POST', { ids });
+    patchDownloads(ids, { status: 'queued', error_message: '' });
+  }
+  refreshLiveProgress();
+  toast(`Queued ${actionable.length} file(s)`, 'ok');
 }
 
 function confirmDelete(message) {
@@ -403,6 +463,10 @@ async function handleAction(e) {
     await loadLibrary();
     return;
   }
+  if (action === 'open-file-url') {
+    window.open(el.dataset.url, '_blank', 'noopener');
+    return;
+  }
   if (action === 'toggle-game') {
     await toggleGame(listId);
     return;
@@ -423,8 +487,14 @@ async function handleAction(e) {
     if (!dl) return;
     const ok = await toggleDownload(dl);
     if (ok) {
-      toast(`${runningStatuses.has(dl.status) ? 'Paused' : 'Started'} 1 file`, 'ok');
-      setTimeout(loadLibrary, 500);
+      const nextStatus = runningStatuses.has(dl.status)
+        ? 'paused'
+        : dl.status === 'paused'
+          ? 'downloading'
+          : 'queued';
+      patchDownloads([id], { status: nextStatus, speed: 0 });
+      refreshLiveProgress();
+      toast(`${nextStatus === 'paused' ? 'Paused' : 'Queued'} 1 file`, 'ok');
     }
     return;
   }
@@ -445,6 +515,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('library').addEventListener('click', handleAction);
   document.getElementById('library').addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ') return;
+    if (e.target.closest('button, a')) return;
     const card = e.target.closest('.library-card');
     if (!card) return;
     e.preventDefault();

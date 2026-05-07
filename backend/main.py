@@ -15,6 +15,7 @@ import os
 import re as _re
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from email.utils import formatdate
 from time import monotonic
 from typing import List, Optional
 from ipaddress import ip_address, ip_network
@@ -23,9 +24,11 @@ from urllib.parse import urlparse
 
 import requests
 from fastapi import Body, Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import RedirectResponse, Response
+from fastapi.responses import Response
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.orm import selectinload
 
 from database import Download, LinkList, SessionLocal, Setting, get_db, init_db
 from downloader import dm
@@ -44,6 +47,9 @@ FRONTEND_DIR = os.path.abspath(
 )
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
 PROGRESS_DB_WRITE_INTERVAL = 5.0
+START_RESOLVE_CONCURRENCY = 4
+FITGIRL_HOSTS = {"fitgirl-repacks.site", "www.fitgirl-repacks.site"}
+FUCKINGFAST_HOSTS = {"fuckingfast.co", "www.fuckingfast.co"}
 
 ALLOWED_SETTINGS = {
     "download_path",
@@ -83,16 +89,29 @@ BOOL_SETTINGS = {
     "reduce_motion",
 }
 _starting_downloads: set[int] = set()
+_cancelled_starts: set[int] = set()
 _starting_lock = asyncio.Lock()
+_resolve_semaphore = asyncio.Semaphore(START_RESOLVE_CONCURRENCY)
+_settings_cache: dict[str, str] = {}
 
 
 # ── Static file helper ─────────────────────────────────────────────────────────
 
-def _read_file(path: str, media_type: str) -> Response:
+def _read_file(path: str, media_type: str, cache_seconds: int = 0) -> Response:
     """Synchronously read and serve a static file (runs in FastAPI's thread pool)."""
     try:
+        stat = os.stat(path)
         with open(path, encoding="utf-8") as f:
-            return Response(content=f.read(), media_type=media_type)
+            headers = {
+                "Cache-Control": (
+                    f"public, max-age={cache_seconds}"
+                    if cache_seconds > 0 else
+                    "no-cache"
+                ),
+                "ETag": f'W/"{int(stat.st_mtime)}-{stat.st_size}"',
+                "Last-Modified": formatdate(stat.st_mtime, usegmt=True),
+            }
+            return Response(content=f.read(), media_type=media_type, headers=headers)
     except FileNotFoundError:
         raise HTTPException(404, "File not found")
 
@@ -101,10 +120,12 @@ def _read_file(path: str, media_type: str) -> Response:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _settings_cache
     init_db()
     db = SessionLocal()
     try:
         s = {row.key: row.value for row in db.query(Setting).all()}
+        _settings_cache = dict(s)
     finally:
         db.close()
 
@@ -150,6 +171,9 @@ class GameAdd(BaseModel):
     size: Optional[str] = None
     categories: Optional[List[str]] = None
 
+class DownloadBatch(BaseModel):
+    ids: List[int]
+
 
 # ── Page routes ────────────────────────────────────────────────────────────────
 
@@ -174,13 +198,17 @@ def serve_settings_page():
 
 @app.get("/css/style.css")
 def serve_css():
-    return _read_file(os.path.join(FRONTEND_DIR, "css", "style.css"), "text/css")
+    return _read_file(os.path.join(FRONTEND_DIR, "css", "style.css"), "text/css", 3600)
 
 @app.get("/js/{filename}")
 def serve_js(filename: str):
     if not _re.match(r'^[\w-]+\.js$', filename):
         raise HTTPException(404)
-    return _read_file(os.path.join(FRONTEND_DIR, "js", filename), "application/javascript")
+    return _read_file(os.path.join(FRONTEND_DIR, "js", filename), "application/javascript", 3600)
+
+@app.get("/favicon.svg")
+def serve_favicon():
+    return _read_file(os.path.join(FRONTEND_DIR, "favicon.svg"), "image/svg+xml", 86400)
 
 
 PRIVATE_NETS = tuple(
@@ -215,6 +243,36 @@ def _is_public_image_url(raw_url: str) -> bool:
     except OSError:
         return False
     return not any(any(addr in net for net in PRIVATE_NETS) for addr in addresses)
+
+
+def _is_public_http_url(raw_url: str, allowed_hosts: Optional[set[str]] = None) -> bool:
+    parsed = urlparse((raw_url or "").strip())
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme not in {"http", "https"} or not host:
+        return False
+    if allowed_hosts is not None and host not in allowed_hosts:
+        return False
+    try:
+        addresses = [ip_address(info[4][0]) for info in getaddrinfo(host, None)]
+    except OSError:
+        return False
+    return not any(any(addr in net for net in PRIVATE_NETS) for addr in addresses)
+
+
+def _clean_url(raw_url: str, allowed_hosts: Optional[set[str]] = None, label: str = "URL") -> str:
+    url = (raw_url or "").strip()
+    if not _is_public_http_url(url, allowed_hosts):
+        raise HTTPException(400, f"Unsupported {label}.")
+    return url
+
+
+def _clean_download_path(raw_path: str) -> str:
+    text = str(raw_path or "").strip().replace("\x00", "")
+    if not text:
+        raise HTTPException(400, "download_path cannot be empty.")
+    if len(text) > 500:
+        raise HTTPException(400, "download_path is too long.")
+    return os.path.abspath(os.path.expanduser(text))
 
 
 def _response_peer_is_public(resp: requests.Response) -> bool:
@@ -271,7 +329,7 @@ def api_proxy_image(url: str):
         )
         with resp:
             if 300 <= resp.status_code < 400:
-                return RedirectResponse(url, status_code=307)
+                raise HTTPException(400, "Image redirects are not proxied.")
             if not _response_peer_is_public(resp):
                 raise HTTPException(400, "Image host resolved to a private address.")
             resp.raise_for_status()
@@ -281,39 +339,78 @@ def api_proxy_image(url: str):
             return Response(
                 content=_read_limited_content(resp),
                 media_type=media_type,
+                headers={"Cache-Control": "public, max-age=86400"},
             )
-    except requests.RequestException:
-        # If the server is behind a restrictive proxy/VPN, let the browser try
-        # the already-validated public image URL directly instead of showing a
-        # broken placeholder.
-        return RedirectResponse(url, status_code=307)
+    except requests.RequestException as exc:
+        raise HTTPException(502, f"Could not fetch image: {exc}")
 
 # ── Lists ──────────────────────────────────────────────────────────────────────
 
+def _download_to_dict(d: Download) -> dict:
+    live     = dm.get_progress(d.id) or {}
+    bytes_dl = live.get("bytes_downloaded", d.bytes_downloaded)
+    total    = live.get("total_bytes", d.total_bytes)
+    status   = live.get("status") or d.status
+    return {
+        "id":               d.id,
+        "url":              d.source_url,
+        "filename":         clean_filename(d.filename) or clean_filename(live.get("filename")) or d.filename or live.get("filename") or "",
+        "status":           status,
+        "bytes_downloaded": bytes_dl,
+        "total_bytes":      total,
+        "progress":         live.get("progress", (bytes_dl / total * 100) if total else 0),
+        "speed":            live.get("speed", 0),
+        "connections":      live.get("connections", 0),
+        "gid":              live.get("gid", ""),
+        "error_message":    live.get("error") or (d.error_message if status == "failed" else "") or "",
+    }
+
+
+def _list_to_dict(lst: LinkList, include_downloads: bool = False) -> dict:
+    dls = lst.downloads
+    total_bytes = sum(d.total_bytes or 0 for d in dls)
+    dl_bytes    = sum(d.bytes_downloaded or 0 for d in dls)
+    completed   = sum(1 for d in dls if d.status == "completed")
+    data = {
+        "id":               lst.id,
+        "name":             lst.name,
+        "source_url":       lst.source_url or "",
+        "image_url":        lst.image_url or "",
+        "description":      lst.description or "",
+        "size":             lst.size or "",
+        "categories":       [c for c in (lst.categories or "").split("|") if c],
+        "created_at":       lst.created_at.isoformat() if lst.created_at else None,
+        "count":            len(dls),
+        "completed":        completed,
+        "dl_ids":           [d.id for d in dls],
+        "total_bytes":      total_bytes,
+        "bytes_downloaded": dl_bytes,
+    }
+    if include_downloads:
+        data["downloads"] = [_download_to_dict(d) for d in dls]
+    return data
+
+
 @app.get("/api/lists")
 def api_get_lists(db: Session = Depends(get_db)):
-    result = []
-    for lst in db.query(LinkList).order_by(LinkList.created_at.desc()).all():
-        dls = lst.downloads
-        total_bytes = sum(d.total_bytes or 0 for d in dls)
-        dl_bytes    = sum(d.bytes_downloaded or 0 for d in dls)
-        completed   = sum(1 for d in dls if d.status == "completed")
-        result.append({
-            "id":               lst.id,
-            "name":             lst.name,
-            "source_url":       lst.source_url or "",
-            "image_url":        lst.image_url or "",
-            "description":      lst.description or "",
-            "size":             lst.size or "",
-            "categories":       [c for c in (lst.categories or "").split("|") if c],
-            "created_at":       lst.created_at.isoformat() if lst.created_at else None,
-            "count":            len(dls),
-            "completed":        completed,
-            "dl_ids":           [d.id for d in dls],
-            "total_bytes":      total_bytes,
-            "bytes_downloaded": dl_bytes,
-        })
-    return result
+    lists = (
+        db.query(LinkList)
+        .options(selectinload(LinkList.downloads))
+        .order_by(LinkList.created_at.desc())
+        .all()
+    )
+    return [_list_to_dict(lst) for lst in lists]
+
+
+@app.get("/api/library")
+def api_get_library(db: Session = Depends(get_db)):
+    lists = (
+        db.query(LinkList)
+        .options(selectinload(LinkList.downloads))
+        .order_by(LinkList.created_at.desc())
+        .all()
+    )
+    return {"lists": [_list_to_dict(lst, include_downloads=True) for lst in lists]}
 
 
 @app.post("/api/lists", status_code=201)
@@ -336,6 +433,7 @@ async def api_delete_list(list_id: int, db: Session = Depends(get_db)):
     if not lst:
         raise HTTPException(404, "List not found.")
     for dl in lst.downloads:
+        await _cancel_starting_download(dl.id)
         await dm.stop(dl.id)
     db.delete(lst)
     db.commit()
@@ -350,25 +448,7 @@ def api_get_downloads(list_id: int, db: Session = Depends(get_db)):
         .order_by(Download.created_at)
         .all()
     )
-    result = []
-    for d in dls:
-        live     = dm.get_progress(d.id) or {}
-        bytes_dl = live.get("bytes_downloaded", d.bytes_downloaded)
-        total    = live.get("total_bytes", d.total_bytes)
-        result.append({
-            "id":               d.id,
-            "url":              d.source_url,
-            "filename":         clean_filename(d.filename) or clean_filename(live.get("filename")) or d.filename or live.get("filename") or "",
-            "status":           live.get("status") or d.status,
-            "bytes_downloaded": bytes_dl,
-            "total_bytes":      total,
-            "progress":         live.get("progress", (bytes_dl / total * 100) if total else 0),
-            "speed":            live.get("speed", 0),
-            "connections":      live.get("connections", 0),
-            "gid":              live.get("gid", ""),
-            "error_message":    d.error_message or live.get("error") or "",
-        })
-    return result
+    return [_download_to_dict(d) for d in dls]
 
 
 @app.post("/api/lists/{list_id}/links")
@@ -381,12 +461,18 @@ def api_add_links(list_id: int, data: LinksAdd, db: Session = Depends(get_db)):
     }
     added = 0
     for url in data.urls:
-        url = url.strip()
+        if not (url or "").strip():
+            continue
+        url = _clean_url(url, FUCKINGFAST_HOSTS, "download link")
         if url and url not in existing:
             db.add(Download(list_id=list_id, source_url=url, status="pending"))
             existing.add(url)
             added += 1
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "One or more links already exist.")
     return {"added": added}
 
 
@@ -402,6 +488,7 @@ def api_add_game(data: GameAdd, db: Session = Depends(get_db)):
     title = data.title.strip()[:200]
     if not title:
         raise HTTPException(400, "Title is required.")
+    game_url = _clean_url(data.game_url, FITGIRL_HOSTS, "FitGirl URL")
 
     # Get or create the list
     lst = db.query(LinkList).filter(LinkList.name == title).first()
@@ -412,20 +499,20 @@ def api_add_game(data: GameAdd, db: Session = Depends(get_db)):
         db.refresh(lst)
 
     categories = [c.strip() for c in (data.categories or []) if c and c.strip()]
-    if data.game_url and not lst.source_url:
-        lst.source_url = data.game_url.strip()
+    if game_url and not lst.source_url:
+        lst.source_url = game_url
     if data.image_url and not lst.image_url:
         lst.image_url = data.image_url.strip()
     if data.description and not lst.description:
         lst.description = data.description.strip()[:2000]
     if data.size and not lst.size:
-        lst.size = data.size.strip()[:80]
+        lst.size = _re.sub(r"^from\s+", "", data.size.strip(), flags=_re.I)[:80]
     if categories and not lst.categories:
         lst.categories = "|".join(categories[:12])
 
     # Scrape download links and keep FitGirl's human filenames when present.
     try:
-        downloads = get_fuckingfast_downloads(data.game_url)
+        downloads = get_fuckingfast_downloads(game_url)
     except Exception as exc:
         raise HTTPException(400, str(exc))
 
@@ -442,9 +529,13 @@ def api_add_game(data: GameAdd, db: Session = Depends(get_db)):
             if filename and not existing.filename:
                 existing.filename = filename
             continue
-        db.add(Download(list_id=lst.id, source_url=url, filename=filename or "", status="pending"))
+        db.add(Download(list_id=lst.id, source_url=_clean_url(url, FUCKINGFAST_HOSTS, "download link"), filename=filename or "", status="pending"))
         added += 1
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "One or more links already exist.")
 
     return {
         "id":          lst.id,
@@ -460,9 +551,29 @@ def api_add_game(data: GameAdd, db: Session = Depends(get_db)):
 async def _release_starting_download(dl_id: int) -> None:
     async with _starting_lock:
         _starting_downloads.discard(dl_id)
+        _cancelled_starts.discard(dl_id)
+
+
+async def _cancel_starting_download(dl_id: int) -> None:
+    async with _starting_lock:
+        if dl_id in _starting_downloads:
+            _cancelled_starts.add(dl_id)
+
+
+async def _start_was_cancelled(dl_id: int) -> bool:
+    async with _starting_lock:
+        return dl_id in _cancelled_starts
+
+
+async def _is_starting_download(dl_id: int) -> bool:
+    async with _starting_lock:
+        return dl_id in _starting_downloads
 
 
 async def _mark_download_failed(dl_id: int, message: str) -> None:
+    if await _start_was_cancelled(dl_id):
+        return
+
     def _write() -> None:
         db = SessionLocal()
         try:
@@ -482,44 +593,51 @@ async def _resolve_and_start(dl_id: int, base_path: str, list_name: str) -> None
     last_db_write = 0.0
 
     try:
-        db = SessionLocal()
-        try:
-            dl = db.query(Download).filter(Download.id == dl_id).first()
-            if not dl:
-                return
-
+        async with _resolve_semaphore:
+            db = SessionLocal()
             try:
-                resolved = await asyncio.to_thread(
-                    resolve_fuckingfast_download_info, dl.source_url
+                dl = db.query(Download).filter(Download.id == dl_id).first()
+                if not dl or dl.status != "queued" or await _start_was_cancelled(dl_id):
+                    return
+
+                try:
+                    source_url = _clean_url(dl.source_url, FUCKINGFAST_HOSTS, "download link")
+                    resolved = await asyncio.to_thread(
+                        resolve_fuckingfast_download_info, source_url
+                    )
+                    if not _is_public_http_url(resolved.url):
+                        raise ValueError("Resolved download URL is not public HTTP(S).")
+                except Exception as exc:
+                    if not await _start_was_cancelled(dl_id):
+                        dl.status = "failed"
+                        dl.error_message = str(exc)[:500]
+                        db.commit()
+                    return
+
+                actual_url = resolved.url
+                filename = (
+                    clean_filename(dl.filename)
+                    or clean_filename(resolved.filename)
+                    or clean_filename(actual_url)
+                    or f"file_{dl_id}"
                 )
-            except Exception as exc:
-                dl.status = "failed"
-                dl.error_message = str(exc)[:500]
-                db.commit()
-                return
+                safe_name = (
+                    "".join(c if c.isalnum() or c in " _-" else "_" for c in list_name)
+                    .strip(" _.") or "default"
+                )
+                output_path = os.path.join(base_path, safe_name, filename)
 
-            actual_url = resolved.url
-            filename = (
-                clean_filename(dl.filename)
-                or clean_filename(resolved.filename)
-                or clean_filename(actual_url)
-                or f"file_{dl_id}"
-            )
-            safe_name = (
-                "".join(c if c.isalnum() or c in " _-" else "_" for c in list_name)
-                .strip("_") or "default"
-            )
-            output_path = os.path.join(base_path, safe_name, filename)
-
-            dl.resolved_url = actual_url
-            dl.filename = filename
-            try:
-                db.commit()
-            except Exception as exc:
-                logger.error("Failed to persist resolved dl_id=%s: %s", dl_id, exc)
-                return
-        finally:
-            db.close()
+                if dl.status != "queued" or await _start_was_cancelled(dl_id):
+                    return
+                dl.resolved_url = actual_url
+                dl.filename = filename
+                try:
+                    db.commit()
+                except Exception as exc:
+                    logger.error("Failed to persist resolved dl_id=%s: %s", dl_id, exc)
+                    return
+            finally:
+                db.close()
 
         if actual_url is None or output_path is None:
             return
@@ -559,6 +677,8 @@ async def _resolve_and_start(dl_id: int, base_path: str, list_name: str) -> None
             await asyncio.to_thread(_write)
 
         try:
+            if await _start_was_cancelled(dl_id):
+                return
             await dm.enqueue(dl_id, actual_url, output_path, on_update)
         except Exception as exc:
             await _mark_download_failed(dl_id, str(exc))
@@ -569,28 +689,53 @@ async def _resolve_and_start(dl_id: int, base_path: str, list_name: str) -> None
         await _release_starting_download(dl_id)
 
 
+async def _queue_download_start(
+    dl: Download,
+    db: Session,
+    base_path: str,
+    allow_paused: bool = False,
+) -> str:
+    if not dm.is_running:
+        raise HTTPException(503, "aria2c is not running. See server logs.")
+
+    async with _starting_lock:
+        live = dm.get_progress(dl.id)
+        effective_status = (live.get("status") if live else None) or dl.status
+        if dl.id in _starting_downloads or effective_status in ("downloading", "queued"):
+            return "already_running"
+        if effective_status == "completed":
+            return "completed"
+        if effective_status == "paused" and not allow_paused:
+            return "paused"
+        if effective_status not in {"pending", "failed", "paused"}:
+            return "skipped"
+        dl.status = "queued"
+        dl.error_message = None
+        db.commit()
+        _cancelled_starts.discard(dl.id)
+        _starting_downloads.add(dl.id)
+
+    list_name = dl.link_list.name if dl.link_list else "default"
+    asyncio.create_task(_resolve_and_start(dl.id, base_path, list_name))
+    return "queued"
+
+
 @app.post("/api/downloads/{dl_id}/start")
 async def api_start(dl_id: int, db: Session = Depends(get_db)):
     dl = db.query(Download).filter(Download.id == dl_id).first()
     if not dl:
         raise HTTPException(404, "Download not found.")
-    if not dm.is_running:
-        raise HTTPException(503, "aria2c is not running. See server logs.")
-
-    async with _starting_lock:
-        live = dm.get_progress(dl_id)
-        effective_status = (live.get("status") if live else None) or dl.status
-        if dl_id in _starting_downloads or effective_status in ("downloading", "queued"):
-            raise HTTPException(400, "Already running.")
-        dl.status = "queued"
-        dl.error_message = None
-        db.commit()
-        _starting_downloads.add(dl_id)
-
-    s = {row.key: row.value for row in db.query(Setting).all()}
-    base_path = s.get("download_path", "downloads")
-    list_name = dl.link_list.name if dl.link_list else "default"
-    asyncio.create_task(_resolve_and_start(dl_id, base_path, list_name))
+    base_path = _clean_download_path(_settings_snapshot(db).get("download_path", "downloads"))
+    status = await _queue_download_start(dl, db, base_path)
+    if status == "queued":
+        return {"status": "queued"}
+    if status == "already_running":
+        raise HTTPException(400, "Already running.")
+    if status == "paused":
+        raise HTTPException(400, "Use resume for paused downloads.")
+    if status == "completed":
+        raise HTTPException(400, "Download is already completed.")
+    raise HTTPException(400, "Download cannot be started.")
     return {"status": "queued"}
 
 
@@ -599,6 +744,11 @@ async def api_pause(dl_id: int, db: Session = Depends(get_db)):
     dl = db.query(Download).filter(Download.id == dl_id).first()
     if not dl:
         raise HTTPException(404, "Download not found.")
+    live = dm.get_progress(dl_id)
+    effective_status = (live.get("status") if live else None) or dl.status
+    if effective_status not in {"downloading", "queued"} and not await _is_starting_download(dl_id):
+        raise HTTPException(400, "Download is not running.")
+    await _cancel_starting_download(dl_id)
     await dm.pause(dl_id)
     dl.status = "paused"
     db.commit()
@@ -607,14 +757,87 @@ async def api_pause(dl_id: int, db: Session = Depends(get_db)):
 
 @app.post("/api/downloads/{dl_id}/resume")
 async def api_resume(dl_id: int, db: Session = Depends(get_db)):
-    if not db.query(Download).filter(Download.id == dl_id).first():
+    dl = db.query(Download).filter(Download.id == dl_id).first()
+    if not dl:
         raise HTTPException(404, "Download not found.")
-    await dm.resume(dl_id)
-    return {"status": "resumed"}
+    live = dm.get_progress(dl_id)
+    if live and live.get("status") == "paused":
+        await dm.resume(dl_id)
+        dl.status = "downloading"
+        db.commit()
+        return {"status": "resumed"}
+    base_path = _clean_download_path(_settings_snapshot(db).get("download_path", "downloads"))
+    status = await _queue_download_start(dl, db, base_path, allow_paused=True)
+    if status == "queued":
+        return {"status": "queued"}
+    if status == "already_running":
+        return {"status": "already_running"}
+    if status == "completed":
+        raise HTTPException(400, "Download is already completed.")
+    raise HTTPException(400, "Download cannot be resumed.")
+
+
+@app.post("/api/downloads/batch/start")
+async def api_batch_start(data: DownloadBatch, db: Session = Depends(get_db)):
+    ids = list(dict.fromkeys(int(i) for i in data.ids if i))
+    if not ids:
+        return {"queued": 0, "skipped": 0}
+    base_path = _clean_download_path(_settings_snapshot(db).get("download_path", "downloads"))
+    rows = db.query(Download).filter(Download.id.in_(ids)).all()
+    queued = 0
+    skipped = 0
+    for dl in rows:
+        status = await _queue_download_start(dl, db, base_path)
+        queued += 1 if status == "queued" else 0
+        skipped += 0 if status == "queued" else 1
+    return {"queued": queued, "skipped": skipped, "requested": len(ids)}
+
+
+@app.post("/api/downloads/batch/resume")
+async def api_batch_resume(data: DownloadBatch, db: Session = Depends(get_db)):
+    ids = list(dict.fromkeys(int(i) for i in data.ids if i))
+    if not ids:
+        return {"resumed": 0, "queued": 0, "skipped": 0}
+    base_path = _clean_download_path(_settings_snapshot(db).get("download_path", "downloads"))
+    rows = db.query(Download).filter(Download.id.in_(ids)).all()
+    resumed = 0
+    queued = 0
+    skipped = 0
+    for dl in rows:
+        live = dm.get_progress(dl.id)
+        if live and live.get("status") == "paused":
+            await dm.resume(dl.id)
+            dl.status = "downloading"
+            resumed += 1
+            continue
+        status = await _queue_download_start(dl, db, base_path, allow_paused=True)
+        queued += 1 if status == "queued" else 0
+        skipped += 0 if status == "queued" else 1
+    db.commit()
+    return {"resumed": resumed, "queued": queued, "skipped": skipped, "requested": len(ids)}
+
+
+@app.post("/api/downloads/batch/pause")
+async def api_batch_pause(data: DownloadBatch, db: Session = Depends(get_db)):
+    ids = list(dict.fromkeys(int(i) for i in data.ids if i))
+    rows = db.query(Download).filter(Download.id.in_(ids)).all() if ids else []
+    paused = 0
+    for dl in rows:
+        live = dm.get_progress(dl.id)
+        effective_status = (live.get("status") if live else None) or dl.status
+        if effective_status not in {"downloading", "queued"} and not await _is_starting_download(dl.id):
+            continue
+        await _cancel_starting_download(dl.id)
+        await dm.pause(dl.id)
+        dl.status = "paused"
+        paused += 1
+    db.commit()
+    return {"paused": paused, "requested": len(ids)}
 
 
 @app.post("/api/downloads/{dl_id}/stop")
 async def api_stop(dl_id: int, db: Session = Depends(get_db)):
+    await _cancel_starting_download(dl_id)
     await dm.stop(dl_id)
     dl = db.query(Download).filter(Download.id == dl_id).first()
     if dl:
@@ -628,6 +851,7 @@ async def api_delete_download(dl_id: int, db: Session = Depends(get_db)):
     dl = db.query(Download).filter(Download.id == dl_id).first()
     if not dl:
         raise HTTPException(404, "Download not found.")
+    await _cancel_starting_download(dl_id)
     await dm.stop(dl_id)
     db.delete(dl)
     db.commit()
@@ -638,7 +862,7 @@ async def api_delete_download(dl_id: int, db: Session = Depends(get_db)):
 
 @app.get("/api/settings")
 def api_get_settings(db: Session = Depends(get_db)):
-    return {s.key: s.value for s in db.query(Setting).all()}
+    return _settings_snapshot(db)
 
 
 def _normalize_bool_setting(value) -> str:
@@ -688,15 +912,28 @@ def _normalize_settings(data: dict) -> dict[str, str]:
             continue
 
         text = str(value).strip()
-        if key == "download_path" and not text:
-            raise HTTPException(400, "download_path cannot be empty.")
+        if key == "download_path":
+            text = _clean_download_path(text)
         normalized[key] = text
 
     return normalized
 
 
+def _settings_snapshot(db: Optional[Session] = None) -> dict[str, str]:
+    if _settings_cache:
+        return dict(_settings_cache)
+    if db is None:
+        db = SessionLocal()
+        try:
+            return {row.key: row.value for row in db.query(Setting).all()}
+        finally:
+            db.close()
+    return {row.key: row.value for row in db.query(Setting).all()}
+
+
 @app.put("/api/settings")
 async def api_update_settings(data: dict = Body(...), db: Session = Depends(get_db)):
+    global _settings_cache
     normalized = _normalize_settings(data)
     for key, value in normalized.items():
         s = db.query(Setting).filter(Setting.key == key).first()
@@ -705,6 +942,7 @@ async def api_update_settings(data: dict = Body(...), db: Session = Depends(get_
         else:
             db.add(Setting(key=key, value=value))
     db.commit()
+    _settings_cache = {**_settings_snapshot(db), **normalized}
 
     if "max_concurrent" in normalized:
         await dm.set_max_concurrent(int(normalized["max_concurrent"]))
@@ -721,8 +959,9 @@ async def api_update_settings(data: dict = Body(...), db: Session = Depends(get_
 def api_scrape_links(data: ScrapeRequest, db: Session = Depends(get_db)):
     if not db.query(LinkList).filter(LinkList.id == data.list_id).first():
         raise HTTPException(404, "List not found.")
+    game_url = _clean_url(data.game_url, FITGIRL_HOSTS, "FitGirl URL")
     try:
-        links = get_fuckingfast_links(data.game_url)
+        links = get_fuckingfast_links(game_url)
     except Exception as exc:
         raise HTTPException(400, str(exc))
     existing = {
@@ -731,11 +970,16 @@ def api_scrape_links(data: ScrapeRequest, db: Session = Depends(get_db)):
     }
     added = 0
     for url in links:
+        url = _clean_url(url, FUCKINGFAST_HOSTS, "download link")
         if url not in existing:
             db.add(Download(list_id=data.list_id, source_url=url, status="pending"))
             existing.add(url)
             added += 1
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "One or more links already exist.")
     return {"found": len(links), "added": added, "links": links}
 
 

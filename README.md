@@ -168,9 +168,18 @@ Run the dev server:
 uv run python run.py
 ```
 
-The backend reloads on changes under `backend/`. Frontend files are served
-directly from `frontend/`, so refresh the browser after editing HTML, CSS, or
-JavaScript.
+By default the server binds to `127.0.0.1` without hot reload. For development,
+enable reload explicitly:
+
+```powershell
+$env:EASYDL_RELOAD="true"
+python run.py
+```
+
+You can also override `EASYDL_HOST` and `EASYDL_PORT` when needed.
+
+Frontend files are served directly from `frontend/`, so refresh the browser after
+editing HTML, CSS, or JavaScript.
 
 Run a syntax check:
 
@@ -255,7 +264,7 @@ responsible for source-site terms and applicable law.
 
 ## License
 
-```
+``` text
 MIT License
 
 Copyright (c) [2026] [frozenKelp]

@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EasyDL - Settings</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/css/style.css">
   <script defer src="/js/api.js"></script>
   <script defer src="/js/settings.js"></script>
@@ -46,32 +47,32 @@
       <div class="settings-panels">
         <section class="settings-panel" data-settings-panel="downloads">
           <h2>Downloads</h2>
-          <label class="settings-row">
-            <span class="settings-label"><strong>Download path</strong><span>Base folder</span></span>
+          <div class="settings-row">
+            <label class="settings-label" for="download_path"><strong>Download path</strong><span>Base folder</span></label>
             <span class="settings-control"><input id="download_path" name="download_path" type="text" placeholder="downloads"></span>
-          </label>
-          <label class="settings-row">
-            <span class="settings-label"><strong>Max concurrent files</strong><span>aria2c queue width</span></span>
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="max_concurrent"><strong>Max concurrent files</strong><span>aria2c queue width</span></label>
             <span class="settings-control narrow"><input id="max_concurrent" name="max_concurrent" type="number" min="1" max="32" step="1"></span>
-          </label>
-          <label class="settings-row">
-            <span class="settings-label"><strong>Connections per file</strong><span>aria2c splits</span></span>
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="connections_per_file"><strong>Connections per file</strong><span>aria2c splits</span></label>
             <span class="settings-control narrow"><input id="connections_per_file" name="connections_per_file" type="number" min="1" max="16" step="1"></span>
-          </label>
-          <label class="settings-row">
-            <span class="settings-label"><strong>Auto-start new games</strong><span>After adding from Browse</span></span>
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="auto_start_new_games"><strong>Auto-start new games</strong><span>After adding from Browse</span></label>
             <span class="settings-control switch-control"><input id="auto_start_new_games" name="auto_start_new_games" type="checkbox"></span>
-          </label>
+          </div>
         </section>
 
         <section class="settings-panel" data-settings-panel="browse" hidden>
           <h2>Browse</h2>
-          <label class="settings-row">
-            <span class="settings-label"><strong>Items per page</strong><span>Popular and search</span></span>
+          <div class="settings-row">
+            <label class="settings-label" for="browse_items_per_page"><strong>Items per page</strong><span>Popular and search</span></label>
             <span class="settings-control narrow"><input id="browse_items_per_page" name="browse_items_per_page" type="number" min="6" max="60" step="1"></span>
-          </label>
-          <label class="settings-row">
-            <span class="settings-label"><strong>Card size</strong><span>Browse grid</span></span>
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="browse_card_size"><strong>Card size</strong><span>Browse grid</span></label>
             <span class="settings-control select-control">
               <select id="browse_card_size" name="browse_card_size">
                 <option value="compact">Compact</option>
@@ -79,21 +80,21 @@
                 <option value="large">Large</option>
               </select>
             </span>
-          </label>
-          <label class="settings-row">
-            <span class="settings-label"><strong>Descriptions</strong><span>Card text</span></span>
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="browse_show_descriptions"><strong>Descriptions</strong><span>Card text</span></label>
             <span class="settings-control switch-control"><input id="browse_show_descriptions" name="browse_show_descriptions" type="checkbox"></span>
-          </label>
-          <label class="settings-row">
-            <span class="settings-label"><strong>Open links in new tab</strong><span>FitGirl pages</span></span>
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="browse_open_links_new_tab"><strong>Open links in new tab</strong><span>FitGirl pages</span></label>
             <span class="settings-control switch-control"><input id="browse_open_links_new_tab" name="browse_open_links_new_tab" type="checkbox"></span>
-          </label>
+          </div>
         </section>
 
         <section class="settings-panel" data-settings-panel="library" hidden>
           <h2>Library</h2>
-          <label class="settings-row">
-            <span class="settings-label"><strong>Card size</strong><span>Library grid</span></span>
+          <div class="settings-row">
+            <label class="settings-label" for="library_card_size"><strong>Card size</strong><span>Library grid</span></label>
             <span class="settings-control select-control">
               <select id="library_card_size" name="library_card_size">
                 <option value="compact">Compact</option>
@@ -101,29 +102,29 @@
                 <option value="large">Large</option>
               </select>
             </span>
-          </label>
-          <label class="settings-row">
-            <span class="settings-label"><strong>Open first game</strong><span>Library launch</span></span>
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="library_default_detail"><strong>Open first game</strong><span>Library launch</span></label>
             <span class="settings-control switch-control"><input id="library_default_detail" name="library_default_detail" type="checkbox"></span>
-          </label>
-          <label class="settings-row">
-            <span class="settings-label"><strong>Show file URLs</strong><span>Detail links</span></span>
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="library_show_file_urls"><strong>Show file URLs</strong><span>Detail links</span></label>
             <span class="settings-control switch-control"><input id="library_show_file_urls" name="library_show_file_urls" type="checkbox"></span>
-          </label>
-          <label class="settings-row">
-            <span class="settings-label"><strong>Confirm deletes</strong><span>Games and links</span></span>
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="confirm_delete"><strong>Confirm deletes</strong><span>Games and links</span></label>
             <span class="settings-control switch-control"><input id="confirm_delete" name="confirm_delete" type="checkbox"></span>
-          </label>
+          </div>
         </section>
 
         <section class="settings-panel" data-settings-panel="appearance" hidden>
           <h2>Appearance</h2>
-          <label class="settings-row">
-            <span class="settings-label"><strong>Interface scale</strong><span id="scale-value">100%</span></span>
+          <div class="settings-row">
+            <label class="settings-label" for="interface_scale"><strong>Interface scale</strong><span id="scale-value">100%</span></label>
             <span class="settings-control"><input id="interface_scale" name="interface_scale" type="range" min="85" max="125" step="5"></span>
-          </label>
-          <label class="settings-row">
-            <span class="settings-label"><strong>Density</strong><span>Spacing</span></span>
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="theme_density"><strong>Density</strong><span>Spacing</span></label>
             <span class="settings-control select-control">
               <select id="theme_density" name="theme_density">
                 <option value="compact">Compact</option>
@@ -131,11 +132,11 @@
                 <option value="spacious">Spacious</option>
               </select>
             </span>
-          </label>
-          <label class="settings-row">
-            <span class="settings-label"><strong>Reduce motion</strong><span>Transitions</span></span>
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="reduce_motion"><strong>Reduce motion</strong><span>Transitions</span></label>
             <span class="settings-control switch-control"><input id="reduce_motion" name="reduce_motion" type="checkbox"></span>
-          </label>
+          </div>
         </section>
 
         <section class="settings-panel" data-settings-panel="runtime" hidden>

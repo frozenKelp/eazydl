@@ -15,6 +15,7 @@ const SETTINGS_DEFAULTS = {
 const API = {
   _ws: null,
   _callbacks: [],
+  _wsSeenAt: 0,
 
   async req(url, method = 'GET', body = null) {
     try {
@@ -41,6 +42,7 @@ const API = {
       try {
         const msg = JSON.parse(e.data);
         if (msg.type !== 'progress') return;
+        this._wsSeenAt = Date.now();
         updateNavStatus(msg.aria2_ok, msg.data || []);
         this._callbacks.forEach(cb => cb(msg));
       } catch {
@@ -63,10 +65,11 @@ function updateNavStatus(aria2ok, downloads) {
   const speed = document.getElementById('nav-speed');
 
   if (dot) dot.className = `status-dot ${aria2ok ? 'ok' : 'err'}`;
-  if (label) label.textContent = aria2ok ? 'aria2c' : 'offline';
+  const total = downloads.reduce((s, d) => s + (d.speed || 0), 0);
+  const active = downloads.filter(d => ['downloading', 'queued'].includes(d.status)).length;
+  if (label) label.textContent = aria2ok ? (active ? `${active} active` : 'idle') : 'offline';
 
   if (speed) {
-    const total = downloads.reduce((s, d) => s + (d.speed || 0), 0);
     speed.textContent = total > 0 ? fmtSpeed(total) : '';
   }
 }
@@ -139,6 +142,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   API.connectWS();
   const poll = async () => {
+    if (Date.now() - API._wsSeenAt < 4000) return;
     const s = await API.req('/api/status');
     if (s) updateNavStatus(s.aria2_running, []);
   };

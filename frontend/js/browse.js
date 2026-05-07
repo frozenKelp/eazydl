@@ -1,11 +1,16 @@
 let knownTitles = new Set();
+let knownTitlesLoaded = false;
 let browseSettings = { ...SETTINGS_DEFAULTS };
 let currentQuery = '';
 let currentPage = 1;
+let browseRequestId = 0;
 
 async function refreshKnownTitles() {
   const lists = await API.req('/api/lists');
-  if (lists) knownTitles = new Set(lists.map(l => l.name));
+  if (lists) {
+    knownTitles = new Set(lists.map(l => l.name));
+    knownTitlesLoaded = true;
+  }
 }
 
 async function loadBrowseSettings() {
@@ -18,19 +23,21 @@ function browseLimit() {
 }
 
 async function loadBrowse(query = currentQuery, page = currentPage) {
+  const requestId = ++browseRequestId;
   currentQuery = query;
   currentPage = Math.max(1, page);
 
   const root = document.getElementById('browse-results');
-  root.innerHTML = `<div class="loading"><span class="spinner"></span> ${query ? 'Searching' : 'Loading popular this year'}...</div>`;
+  root.innerHTML = `<div class="loading"><span class="spinner"></span> ${query ? 'Searching and loading details' : 'Loading popular this year, covers, and sizes'}...</div>`;
 
-  await refreshKnownTitles();
+  if (!knownTitlesLoaded) await refreshKnownTitles();
   const params = new URLSearchParams({
     query,
     page: String(currentPage),
     limit: String(browseLimit()),
   });
   const data = await API.req(`/api/scrape/search?${params.toString()}`);
+  if (requestId !== browseRequestId) return;
   if (!data) return;
 
   const games = data.games || [];
@@ -89,6 +96,7 @@ function categoryString(categories) {
 function renderBrowseCard(game) {
   const inLibrary = knownTitles.has(game.title);
   const image = proxiedImage(game.image);
+  const size = game.size ? String(game.size).replace(/^from\s+/i, '') : '';
   const categories = categoryString(game.categories);
   const openTarget = boolSetting(browseSettings.browse_open_links_new_tab, true)
     ? 'target="_blank" rel="noopener"'
@@ -98,13 +106,13 @@ function renderBrowseCard(game) {
       data-url="${esc(game.url)}"
       data-image-url="${esc(game.image || '')}"
       data-description="${esc(game.excerpt || '')}"
-      data-size="${esc(game.size || '')}"
+      data-size="${esc(size)}"
       data-categories="${esc(categories)}">
     <div class="browse-thumb-wrap">
       ${image
         ? `<img class="browse-thumb" src="${esc(image)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'browse-thumb-placeholder',textContent:'No image'}))">`
         : '<div class="browse-thumb-placeholder">No image</div>'}
-      ${game.size ? `<span class="size-chip">${esc(game.size)}</span>` : ''}
+      ${size ? `<span class="size-chip">${esc(size)}</span>` : ''}
     </div>
     <div class="browse-card-body">
       <h2 class="browse-card-title" title="${esc(game.title)}">${esc(game.title)}</h2>
@@ -138,14 +146,16 @@ async function addCard(card, button) {
     return;
   }
   knownTitles.add(title);
-  toast(`Added ${res.added} link(s) for ${title}`, 'ok');
+  toast(`Added ${res.added} of ${res.found} link(s) for ${title}`, 'ok');
   button.outerHTML = '<span class="in-library-tag">In library</span>';
 
   if (boolSetting(browseSettings.auto_start_new_games)) {
     const downloads = await API.req(`/api/lists/${res.id}/downloads`);
     const pending = (downloads || []).filter(d => ['pending', 'failed'].includes(d.status));
-    for (const dl of pending) await API.req(`/api/downloads/${dl.id}/start`, 'POST');
-    if (pending.length) toast(`Started ${pending.length} file(s)`, 'ok');
+    if (pending.length) {
+      const ok = await API.req('/api/downloads/batch/start', 'POST', { ids: pending.map(d => d.id) });
+      if (ok) toast(`Queued ${ok.queued || pending.length} file(s)`, 'ok');
+    }
   }
 }
 
@@ -169,8 +179,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   root.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-action="add"]');
-    if (!btn) return;
-    addCard(btn.closest('.browse-card'), btn);
+    if (btn) {
+      addCard(btn.closest('.browse-card'), btn);
+      return;
+    }
+    if (e.target.closest('a, button')) return;
+    const card = e.target.closest('.browse-card');
+    if (!card) return;
+    const link = card.querySelector('.browse-card-actions a');
+    if (link) link.click();
   });
 
   loadBrowse('', 1);

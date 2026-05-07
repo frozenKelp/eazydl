@@ -85,7 +85,6 @@ document.addEventListener('DOMContentLoaded', () => {
     btn.addEventListener('click', () => showPanel(btn.dataset.settingsTab));
   });
   document.getElementById('interface_scale').addEventListener('input', previewScale);
-  API.onProgress(loadRuntime);
   showPanel('downloads');
   loadSettings();
   setInterval(loadRuntime, 5000);

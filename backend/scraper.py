@@ -36,8 +36,9 @@ ARCHIVE_RE = re.compile(
     re.IGNORECASE,
 )
 SIZE_VALUE_RE = re.compile(
-    r"(?:from\s+)?\d+(?:[.,]\d+)?\s*(?:KB|MB|GB|TB)"
-    r"(?:\s*(?:/|-|\u2013|\u2014|to)\s*(?:\d+(?:[.,]\d+)?\s*)?(?:KB|MB|GB|TB))?",
+    r"(?:from\s+)?"
+    r"(?:\d+(?:[.,]\d+)?\s*(?:KB|MB|GB|TB)?\s*(?:/|-|\u2013|\u2014|to)\s*)?"
+    r"\d+(?:[.,]\d+)?\s*(?:KB|MB|GB|TB)",
     re.IGNORECASE,
 )
 
@@ -59,6 +60,13 @@ def _get_session() -> requests.Session:
         s.headers.update(HEADERS)
         _tls.session = s
     return _tls.session
+
+
+def _close_session() -> None:
+    session = getattr(_tls, "session", None)
+    if session is not None:
+        session.close()
+        delattr(_tls, "session")
 
 
 def clean_filename(value: Optional[str]) -> Optional[str]:
@@ -236,6 +244,7 @@ def _clean_excerpt(text: str) -> str:
 def _clean_size(value: str) -> Optional[str]:
     value = re.sub(r"\s+", " ", value or "").strip(" .,:;|-")
     value = value.replace("\u2013", "-").replace("\u2014", "-")
+    value = re.sub(r"^from\s+", "", value, flags=re.I)
     return value[:80] or None
 
 
@@ -245,8 +254,6 @@ def _size_from_text(text: str) -> Optional[str]:
         match = re.search(rf"{label}\s*:?\s*([^\n\r]{{0,180}})", text, re.I)
         if match and (size_match := SIZE_VALUE_RE.search(match.group(1))):
             return _clean_size(size_match.group(0))
-    if fallback := SIZE_VALUE_RE.search(text):
-        return _clean_size(fallback.group(0))
     return None
 
 
@@ -271,28 +278,31 @@ def _size_from_article(article) -> Optional[str]:
 def _enrich_game(game: Dict) -> Dict:
     if game.get("image") and game.get("excerpt") and game.get("size"):
         return game
-    session = _get_session()
-    resp = session.get(game["url"], timeout=15)
-    resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, "html.parser")
-    article = soup.find("article") or soup
-    if not _is_game_article(article):
-        game["is_game"] = False
+    try:
+        session = _get_session()
+        resp = session.get(game["url"], timeout=15)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+        article = soup.find("article") or soup
+        if not _is_game_article(article):
+            game["is_game"] = False
+            return game
+        if not game.get("image"):
+            game["image"] = _image_from_article(article, game["url"])
+        if not game.get("excerpt"):
+            game["excerpt"] = _excerpt_from_article(article)
+        if not game.get("size"):
+            game["size"] = _size_from_article(article)
+        game["categories"] = _article_categories(article)
+        game["is_game"] = True
         return game
-    if not game.get("image"):
-        game["image"] = _image_from_article(article, game["url"])
-    if not game.get("excerpt"):
-        game["excerpt"] = _excerpt_from_article(article)
-    if not game.get("size"):
-        game["size"] = _size_from_article(article)
-    game["categories"] = _article_categories(article)
-    game["is_game"] = True
-    return game
+    finally:
+        _close_session()
 
 
 def _enrich_games(games: list[Dict]) -> list[Dict]:
     enriched: list[Optional[Dict]] = [None] * len(games)
-    with ThreadPoolExecutor(max_workers=min(6, max(1, len(games)))) as pool:
+    with ThreadPoolExecutor(max_workers=min(3, max(1, len(games)))) as pool:
         futures = {pool.submit(_enrich_game, dict(game)): idx for idx, game in enumerate(games)}
         for future in as_completed(futures):
             idx = futures[future]
@@ -353,34 +363,37 @@ def get_fuckingfast_downloads(game_url: str) -> List[Dict[str, Optional[str]]]:
     Given a FitGirl game-page URL, return fuckingfast.co links plus the human
     filename displayed next to each link when FitGirl exposes it.
     """
-    session = _get_session()
-    resp = session.get(game_url, timeout=15)
-    resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, "html.parser")
+    try:
+        session = _get_session()
+        resp = session.get(game_url, timeout=15)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
 
-    downloads: List[Dict[str, Optional[str]]] = []
-    seen: set[str] = set()
-    containers = soup.find_all("div", class_="dlinks") or [soup]
-    for div in containers:
-        for a in div.find_all("a", href=True):
-            href: str = urljoin(game_url, a["href"])
-            host = (urlparse(href).hostname or "").lower()
-            if host not in {"fuckingfast.co", "www.fuckingfast.co"} or href in seen:
-                continue
-            seen.add(href)
-            filename = clean_filename(a.get_text(" ", strip=True))
-            if not filename:
-                # Some mirrors put the name in the surrounding table row/list item.
-                parent = a.find_parent(["tr", "li", "p", "div"])
-                filename = clean_filename(parent.get_text(" ", strip=True) if parent else None)
-            downloads.append({"url": href, "filename": filename})
+        downloads: List[Dict[str, Optional[str]]] = []
+        seen: set[str] = set()
+        containers = soup.find_all("div", class_="dlinks") or [soup]
+        for div in containers:
+            for a in div.find_all("a", href=True):
+                href: str = urljoin(game_url, a["href"])
+                host = (urlparse(href).hostname or "").lower()
+                if host not in {"fuckingfast.co", "www.fuckingfast.co"} or href in seen:
+                    continue
+                seen.add(href)
+                filename = clean_filename(a.get_text(" ", strip=True))
+                if not filename:
+                    # Some mirrors put the name in the surrounding table row/list item.
+                    parent = a.find_parent(["tr", "li", "p", "div"])
+                    filename = clean_filename(parent.get_text(" ", strip=True) if parent else None)
+                downloads.append({"url": href, "filename": filename})
 
-    if not downloads:
-        raise ValueError(
-            "No fuckingfast.co links found on that page. "
-            "Make sure it's a valid FitGirl game URL."
-        )
-    return downloads
+        if not downloads:
+            raise ValueError(
+                "No fuckingfast.co links found on that page. "
+                "Make sure it's a valid FitGirl game URL."
+            )
+        return downloads
+    finally:
+        _close_session()
 
 
 def get_fuckingfast_links(game_url: str) -> List[str]:
@@ -393,35 +406,38 @@ def resolve_fuckingfast_download_info(ff_url: str) -> ResolvedDownload:
     Given a fuckingfast.co link, return the actual direct download URL and the
     display filename from the FuckingFast page when available.
     """
-    session = _get_session()
-    resp = session.get(ff_url, timeout=15)
-    resp.raise_for_status()
+    try:
+        session = _get_session()
+        resp = session.get(ff_url, timeout=15)
+        resp.raise_for_status()
 
-    soup = BeautifulSoup(resp.text, "html.parser")
-    filename = _filename_from_content_disposition(resp.headers.get("content-disposition"))
-    filename = filename or _filename_from_ff_page(soup, resp.text)
+        soup = BeautifulSoup(resp.text, "html.parser")
+        filename = _filename_from_content_disposition(resp.headers.get("content-disposition"))
+        filename = filename or _filename_from_ff_page(soup, resp.text)
 
-    # Strategy 1: find window.open(...) in any <script> tag
-    for script in soup.find_all("script"):
-        text = script.string or script.get_text("\n") or ""
-        m = re.search(r"window\.open\(['\"]+(https?://[^'\")\s]+)", text)
-        if m:
-            return ResolvedDownload(m.group(1), filename)
+        # Strategy 1: find window.open(...) in any <script> tag
+        for script in soup.find_all("script"):
+            text = script.string or script.get_text("\n") or ""
+            m = re.search(r"window\.open\(['\"]+(https?://[^'\")\s]+)", text)
+            if m:
+                return ResolvedDownload(m.group(1), filename)
 
-    # Strategy 2: look for a direct download anchor
-    for a in soup.find_all("a", href=True):
-        href: str = urljoin(ff_url, a["href"])
-        anchor_name = clean_filename(a.get("download")) or clean_filename(a.get_text(" ", strip=True))
-        if any(href.lower().split("?", 1)[0].endswith(ext) for ext in (".zip", ".rar", ".iso", ".7z")):
-            return ResolvedDownload(href, filename or anchor_name or clean_filename(href))
-        # Part files like .part1.rar, .r00 etc.
-        if re.search(r"\.(part\d+\.rar|r\d{2})(?:[?#].*)?$", href, re.I):
-            return ResolvedDownload(href, filename or anchor_name or clean_filename(href))
+        # Strategy 2: look for a direct download anchor
+        for a in soup.find_all("a", href=True):
+            href: str = urljoin(ff_url, a["href"])
+            anchor_name = clean_filename(a.get("download")) or clean_filename(a.get_text(" ", strip=True))
+            if any(href.lower().split("?", 1)[0].endswith(ext) for ext in (".zip", ".rar", ".iso", ".7z")):
+                return ResolvedDownload(href, filename or anchor_name or clean_filename(href))
+            # Part files like .part1.rar, .r00 etc.
+            if re.search(r"\.(part\d+\.rar|r\d{2})(?:[?#].*)?$", href, re.I):
+                return ResolvedDownload(href, filename or anchor_name or clean_filename(href))
 
-    raise ValueError(
-        f"Could not resolve a direct download URL from: {ff_url}\n"
-        "The page structure may have changed."
-    )
+        raise ValueError(
+            f"Could not resolve a direct download URL from: {ff_url}\n"
+            "The page structure may have changed."
+        )
+    finally:
+        _close_session()
 
 
 def resolve_fuckingfast_download(ff_url: str) -> str:
@@ -434,68 +450,71 @@ def search_fitgirl(query: str = "", page: int = 1, limit: int = 24) -> List[Dict
     Search FitGirl repacks or browse the yearly popular repacks page.
     Returns game-only dicts: {title, url, image, excerpt, size, categories}.
     """
-    session = _get_session()
-    query = query.strip()
-    page = max(1, int(page or 1))
-    limit = max(1, min(int(limit or 24), 60))
+    try:
+        session = _get_session()
+        query = query.strip()
+        page = max(1, int(page or 1))
+        limit = max(1, min(int(limit or 24), 60))
 
-    if query:
-        quoted = requests.utils.quote(query)
-        url = (
-            f"https://fitgirl-repacks.site/page/{page}/?s={quoted}"
-            if page > 1 else
-            f"https://fitgirl-repacks.site/?s={quoted}"
-        )
-    else:
-        url = POPULAR_REPACKS_URL
+        if query:
+            quoted = requests.utils.quote(query)
+            url = (
+                f"https://fitgirl-repacks.site/page/{page}/?s={quoted}"
+                if page > 1 else
+                f"https://fitgirl-repacks.site/?s={quoted}"
+            )
+        else:
+            url = POPULAR_REPACKS_URL
 
-    resp = session.get(url, timeout=15)
-    resp.raise_for_status()
+        resp = session.get(url, timeout=15)
+        resp.raise_for_status()
 
-    soup = BeautifulSoup(resp.text, "html.parser")
-    games: List[Dict] = []
+        soup = BeautifulSoup(resp.text, "html.parser")
+        games: List[Dict] = []
 
-    if not query:
-        popular_games = _popular_games_from_page(soup, url)
-        start = (page - 1) * limit
-        games = popular_games[start:start + limit]
+        if not query:
+            popular_games = _popular_games_from_page(soup, url)
+            start = (page - 1) * limit
+            games = popular_games[start:start + limit]
+            games = _enrich_games(games)
+            for game in games:
+                game.pop("is_game", None)
+            return games
+
+        for article in soup.find_all("article", limit=max(32, limit * 2)):
+            if not _is_game_article(article):
+                continue
+
+            title_tag = article.find(["h1", "h2"], class_="entry-title")
+            if not title_tag:
+                continue
+            link_tag = title_tag.find("a")
+            if not link_tag:
+                continue
+
+            title: str = link_tag.get_text(" ", strip=True)
+            if not _matches_query(title, query):
+                continue
+
+            game_url: str = urljoin(url, link_tag["href"])
+            games.append({
+                "title": title,
+                "url": game_url,
+                "image": _image_from_article(article, game_url),
+                "excerpt": _excerpt_from_article(article),
+                "size": _size_from_article(article),
+                "categories": _article_categories(article),
+                "is_game": True,
+            })
+            if len(games) >= limit:
+                break
+
+        # Search result pages often omit thumbnails/excerpts, so hydrate those cards
+        # from their individual game pages. Homepage cards are already hydrated, but
+        # this also fills any missing fields there.
         games = _enrich_games(games)
         for game in games:
             game.pop("is_game", None)
         return games
-
-    for article in soup.find_all("article", limit=max(32, limit * 2)):
-        if not _is_game_article(article):
-            continue
-
-        title_tag = article.find(["h1", "h2"], class_="entry-title")
-        if not title_tag:
-            continue
-        link_tag = title_tag.find("a")
-        if not link_tag:
-            continue
-
-        title: str = link_tag.get_text(" ", strip=True)
-        if not _matches_query(title, query):
-            continue
-
-        game_url: str = urljoin(url, link_tag["href"])
-        games.append({
-            "title": title,
-            "url": game_url,
-            "image": _image_from_article(article, game_url),
-            "excerpt": _excerpt_from_article(article),
-            "size": _size_from_article(article),
-            "categories": _article_categories(article),
-            "is_game": True,
-        })
-        if len(games) >= limit:
-            break
-
-    # Search result pages often omit thumbnails/excerpts, so hydrate those cards
-    # from their individual game pages. Homepage cards are already hydrated, but
-    # this also fills any missing fields there.
-    games = _enrich_games(games)
-    for game in games:
-        game.pop("is_game", None)
-    return games
+    finally:
+        _close_session()

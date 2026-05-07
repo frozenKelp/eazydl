@@ -9,6 +9,7 @@ Fixes vs. original:
 """
 
 import os
+import logging
 from datetime import datetime, timezone
 
 from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, Text, create_engine, inspect, text
@@ -17,6 +18,7 @@ from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.abspath(os.path.join(BASE_DIR, "..", "data"))
 DOWNLOADS_DIR = os.path.abspath(os.path.join(BASE_DIR, "..", "downloads"))
+logger = logging.getLogger(__name__)
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 
@@ -85,6 +87,8 @@ def init_db() -> None:
     """Create tables and seed default settings on first run."""
     Base.metadata.create_all(bind=engine)
     _migrate_link_list_metadata()
+    _migrate_download_unique_index()
+    _migrate_size_prefixes()
 
     db = SessionLocal()
     try:
@@ -138,3 +142,32 @@ def _migrate_link_list_metadata() -> None:
     with engine.begin() as conn:
         for name, ddl in missing:
             conn.execute(text(f"ALTER TABLE link_lists ADD COLUMN {name} {ddl}"))
+
+
+def _migrate_download_unique_index() -> None:
+    """Prevent duplicate source links per game at the SQLite level."""
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS "
+                "ux_downloads_list_source ON downloads (list_id, source_url)"
+            ))
+    except Exception as exc:
+        logger.warning(
+            "Could not create downloads duplicate-protection index; "
+            "remove duplicate links first: %s",
+            exc,
+        )
+
+
+def _migrate_size_prefixes() -> None:
+    """Clean old scraped sizes like 'from 64.5 GB' for existing libraries."""
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "UPDATE link_lists "
+                "SET size = substr(size, 6) "
+                "WHERE lower(substr(size, 1, 5)) = 'from '"
+            ))
+    except Exception as exc:
+        logger.warning("Could not normalize existing size labels: %s", exc)

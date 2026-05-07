@@ -30,6 +30,7 @@ import logging
 import os
 import shutil
 import subprocess
+from time import monotonic
 from typing import Callable, Dict, Optional
 
 import aria2p
@@ -66,12 +67,15 @@ class Aria2Manager:
 
         # In-memory progress cache returned to WS & REST endpoints
         self._cache: Dict[int, dict] = {}
+        self._terminal_since: Dict[int, float] = {}
+        self._terminal_notified: set[int] = set()
 
         self._poll_task: Optional[asyncio.Task] = None
         self._poll_failures: int = 0
         self.is_running: bool = False
         self.max_concurrent: int = 3
         self.connections_per_file: int = 4
+        self.terminal_cache_seconds: float = 10.0
 
     # ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -252,11 +256,27 @@ class Aria2Manager:
             }
             self._cache[dl_id] = snapshot
 
-            if cb := self._callbacks.get(dl_id):
+            status = snapshot["status"]
+            is_terminal = status in {"completed", "failed", "pending"}
+            if is_terminal:
+                self._terminal_since.setdefault(dl_id, monotonic())
+            else:
+                self._terminal_since.pop(dl_id, None)
+                self._terminal_notified.discard(dl_id)
+
+            should_notify = not is_terminal or dl_id not in self._terminal_notified
+            if should_notify and (cb := self._callbacks.get(dl_id)):
                 try:
                     await cb(snapshot)
+                    if is_terminal:
+                        self._terminal_notified.add(dl_id)
                 except Exception as exc:
                     logger.debug("on_update callback error for dl_id=%s: %s", dl_id, exc)
+
+            if is_terminal:
+                seen_at = self._terminal_since.get(dl_id, monotonic())
+                if monotonic() - seen_at >= self.terminal_cache_seconds:
+                    self._clean(dl_id, dl.gid)
 
     # ── Enqueue ────────────────────────────────────────────────────────────────
 
@@ -294,6 +314,8 @@ class Aria2Manager:
 
         self._gid_map[dl_id] = gid
         self._rev_map[gid] = dl_id
+        self._terminal_since.pop(dl_id, None)
+        self._terminal_notified.discard(dl_id)
         if on_update:
             self._callbacks[dl_id] = on_update
 
@@ -364,6 +386,8 @@ class Aria2Manager:
             self._rev_map.pop(gid, None)
         self._callbacks.pop(dl_id, None)
         self._cache.pop(dl_id, None)
+        self._terminal_since.pop(dl_id, None)
+        self._terminal_notified.discard(dl_id)
 
     # ── Config ─────────────────────────────────────────────────────────────────
 
@@ -408,7 +432,6 @@ class Aria2Manager:
             }
         except Exception as exc:
             logger.warning("aria2c stats unavailable: %s", exc)
-            self._mark_unavailable("aria2c stats request failed")
             return {"aria2_running": False}
 
 
