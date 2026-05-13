@@ -8,6 +8,7 @@ Scraper module:
 """
 
 import re
+import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -45,6 +46,10 @@ SIZE_VALUE_RE = re.compile(
 # BUG FIX: thread-local storage gives each thread its own Session instance,
 # preserving connection-pooling benefits while eliminating race conditions.
 _tls = threading.local()
+_cache_lock = threading.Lock()
+_SEARCH_CACHE: dict[tuple[str, int, int, bool], tuple[float, list[Dict]]] = {}
+_DETAIL_CACHE: dict[str, tuple[float, Dict]] = {}
+CACHE_TTL_SECONDS = 300
 
 
 @dataclass
@@ -67,6 +72,25 @@ def _close_session() -> None:
     if session is not None:
         session.close()
         delattr(_tls, "session")
+
+
+def _cache_get(cache: dict, key):
+    with _cache_lock:
+        hit = cache.get(key)
+        if not hit:
+            return None
+        expires_at, value = hit
+        if expires_at < time.monotonic():
+            cache.pop(key, None)
+            return None
+        if isinstance(value, list):
+            return [dict(item) for item in value]
+        return dict(value)
+
+
+def _cache_set(cache: dict, key, value) -> None:
+    with _cache_lock:
+        cache[key] = (time.monotonic() + CACHE_TTL_SECONDS, value)
 
 
 def clean_filename(value: Optional[str]) -> Optional[str]:
@@ -315,6 +339,26 @@ def _enrich_games(games: list[Dict]) -> list[Dict]:
     return [game for game in enriched if game and game.get("is_game", True)]
 
 
+def get_fitgirl_game_details(game_url: str) -> Dict:
+    """Fetch detail metadata for one FitGirl game page."""
+    cached = _cache_get(_DETAIL_CACHE, game_url)
+    if cached is not None:
+        return cached
+
+    game = {
+        "url": game_url,
+        "image": None,
+        "excerpt": "",
+        "size": None,
+        "categories": [],
+        "is_game": True,
+    }
+    details = _enrich_game(game)
+    details.pop("is_game", None)
+    _cache_set(_DETAIL_CACHE, game_url, details)
+    return dict(details)
+
+
 def _clean_popular_title(value: str) -> str:
     value = re.sub(r"\s+", " ", value or "").strip()
     value = re.sub(r"^image:\s*", "", value, flags=re.I)
@@ -445,7 +489,16 @@ def resolve_fuckingfast_download(ff_url: str) -> str:
     return resolve_fuckingfast_download_info(ff_url).url
 
 
-def search_fitgirl(query: str = "", page: int = 1, limit: int = 24) -> List[Dict]:
+def _public_games(games: list[Dict]) -> list[Dict]:
+    cleaned = []
+    for game in games:
+        item = dict(game)
+        item.pop("is_game", None)
+        cleaned.append(item)
+    return cleaned
+
+
+def search_fitgirl(query: str = "", page: int = 1, limit: int = 24, hydrate: bool = True) -> List[Dict]:
     """
     Search FitGirl repacks or browse the yearly popular repacks page.
     Returns game-only dicts: {title, url, image, excerpt, size, categories}.
@@ -455,6 +508,10 @@ def search_fitgirl(query: str = "", page: int = 1, limit: int = 24) -> List[Dict
         query = query.strip()
         page = max(1, int(page or 1))
         limit = max(1, min(int(limit or 24), 60))
+        cache_key = (query.lower(), page, limit, bool(hydrate))
+        cached = _cache_get(_SEARCH_CACHE, cache_key)
+        if cached is not None:
+            return cached
 
         if query:
             quoted = requests.utils.quote(query)
@@ -476,9 +533,10 @@ def search_fitgirl(query: str = "", page: int = 1, limit: int = 24) -> List[Dict
             popular_games = _popular_games_from_page(soup, url)
             start = (page - 1) * limit
             games = popular_games[start:start + limit]
-            games = _enrich_games(games)
-            for game in games:
-                game.pop("is_game", None)
+            if hydrate:
+                games = _enrich_games(games)
+            games = _public_games(games)
+            _cache_set(_SEARCH_CACHE, cache_key, games)
             return games
 
         for article in soup.find_all("article", limit=max(32, limit * 2)):
@@ -509,12 +567,10 @@ def search_fitgirl(query: str = "", page: int = 1, limit: int = 24) -> List[Dict
             if len(games) >= limit:
                 break
 
-        # Search result pages often omit thumbnails/excerpts, so hydrate those cards
-        # from their individual game pages. Homepage cards are already hydrated, but
-        # this also fills any missing fields there.
-        games = _enrich_games(games)
-        for game in games:
-            game.pop("is_game", None)
+        if hydrate:
+            games = _enrich_games(games)
+        games = _public_games(games)
+        _cache_set(_SEARCH_CACHE, cache_key, games)
         return games
     finally:
         _close_session()

@@ -145,7 +145,14 @@ Settings are stored in SQLite and can be changed from the Settings page.
 eazydl/
 |-- backend/
 |   |-- main.py
+|   |-- config.py
+|   |-- download_service.py
 |   |-- downloader.py
+|   |-- routers/
+|   |-- schemas.py
+|   |-- security.py
+|   |-- serializers.py
+|   |-- settings_service.py
 |   |-- scraper.py
 |   `-- database.py
 |-- frontend/
@@ -179,7 +186,8 @@ python run.py
 You can also override `EASYDL_HOST` and `EASYDL_PORT` when needed.
 
 Frontend files are served directly from `frontend/`, so refresh the browser after
-editing HTML, CSS, or JavaScript.
+editing HTML, CSS, or JavaScript. Shared page chrome lives in the
+`easy-shell` Web Component at `frontend/js/components/app-shell.js`.
 
 Run a syntax check:
 

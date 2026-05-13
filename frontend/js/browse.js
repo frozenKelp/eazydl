@@ -4,6 +4,12 @@ let browseSettings = { ...SETTINGS_DEFAULTS };
 let currentQuery = '';
 let currentPage = 1;
 let browseRequestId = 0;
+let hydrationObserver = null;
+const detailCache = new Map();
+const hydrationPromises = new Map();
+const detailQueue = [];
+let activeHydrations = 0;
+const maxDetailHydrations = 4;
 
 async function refreshKnownTitles() {
   const lists = await API.req('/api/lists');
@@ -28,13 +34,14 @@ async function loadBrowse(query = currentQuery, page = currentPage) {
   currentPage = Math.max(1, page);
 
   const root = document.getElementById('browse-results');
-  root.innerHTML = `<div class="loading"><span class="spinner"></span> ${query ? 'Searching and loading details' : 'Loading popular this year, covers, and sizes'}...</div>`;
+  root.innerHTML = `<div class="loading"><span class="spinner"></span> ${query ? 'Searching' : 'Loading popular this year'}...</div>`;
 
   if (!knownTitlesLoaded) await refreshKnownTitles();
   const params = new URLSearchParams({
     query,
     page: String(currentPage),
     limit: String(browseLimit()),
+    hydrate: 'false',
   });
   const data = await API.req(`/api/scrape/search?${params.toString()}`);
   if (requestId !== browseRequestId) return;
@@ -65,6 +72,7 @@ async function loadBrowse(query = currentQuery, page = currentPage) {
     </div>
     ${renderPager(games.length >= browseLimit())}`;
   bindPager(games.length);
+  observeDetailHydration(root);
 }
 
 function renderPager(hasNext) {
@@ -108,7 +116,8 @@ function renderBrowseCard(game) {
       data-image-url="${esc(game.image || '')}"
       data-description="${esc(game.excerpt || '')}"
       data-size="${esc(size)}"
-      data-categories="${esc(categories)}">
+      data-categories="${esc(categories)}"
+      data-hydrated="${game.excerpt && game.size ? 'true' : 'false'}">
     <div class="browse-thumb-wrap">
       ${image
         ? `<img class="browse-thumb" src="${esc(image)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'browse-thumb-placeholder',textContent:'No image'}))">`
@@ -118,7 +127,7 @@ function renderBrowseCard(game) {
     <div class="browse-card-body">
       <h2 class="browse-card-title" title="${esc(game.title)}">${esc(game.title)}</h2>
       <div class="card-tags">${cats.map(c => `<span class="tag-chip">${esc(c)}</span>`).join('')}</div>
-      <p class="browse-card-excerpt">${esc(game.excerpt || 'No description available.')}</p>
+      <p class="browse-card-excerpt">${esc(game.excerpt || 'Loading details...')}</p>
       <div class="browse-card-actions">
         ${inLibrary
           ? '<span class="in-library-tag">In library</span>'
@@ -129,10 +138,124 @@ function renderBrowseCard(game) {
   </article>`;
 }
 
+function observeDetailHydration(root) {
+  if (hydrationObserver) hydrationObserver.disconnect();
+  const cards = [...root.querySelectorAll('.browse-card[data-hydrated="false"]')];
+  if (!cards.length) return;
+
+  if (!('IntersectionObserver' in window)) {
+    cards.slice(0, 8).forEach(scheduleHydration);
+    return;
+  }
+
+  hydrationObserver = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (!entry.isIntersecting) return;
+      hydrationObserver.unobserve(entry.target);
+      scheduleHydration(entry.target);
+    });
+  }, { rootMargin: '360px 0px' });
+
+  cards.forEach(card => hydrationObserver.observe(card));
+}
+
+function scheduleHydration(card) {
+  if (!card || card.dataset.hydrated === 'true' || card.dataset.hydrationQueued === 'true') return;
+  card.dataset.hydrationQueued = 'true';
+  detailQueue.push(card);
+  pumpHydrationQueue();
+}
+
+function pumpHydrationQueue() {
+  while (activeHydrations < maxDetailHydrations && detailQueue.length) {
+    const card = detailQueue.shift();
+    if (!card || card.dataset.hydrated === 'true') continue;
+    activeHydrations += 1;
+    hydrateCard(card).finally(() => {
+      activeHydrations -= 1;
+      pumpHydrationQueue();
+    });
+  }
+}
+
+async function hydrateCard(card) {
+  if (!card || card.dataset.hydrated === 'true') return true;
+  const url = card.dataset.url;
+  if (!url) {
+    card.dataset.hydrationQueued = 'false';
+    return false;
+  }
+
+  if (detailCache.has(url)) {
+    applyCardDetails(card, detailCache.get(url));
+    return true;
+  }
+
+  if (hydrationPromises.has(url)) {
+    const details = await hydrationPromises.get(url);
+    if (details) applyCardDetails(card, details);
+    return Boolean(details);
+  }
+
+  const promise = API.req(`/api/scrape/details?url=${encodeURIComponent(url)}`)
+    .finally(() => hydrationPromises.delete(url));
+  hydrationPromises.set(url, promise);
+  const details = await promise;
+  if (!details) {
+    card.dataset.hydrationQueued = 'false';
+    return false;
+  }
+
+  detailCache.set(url, details);
+  applyCardDetails(card, details);
+  return true;
+}
+
+function applyCardDetails(card, details) {
+  const imageUrl = details.image || '';
+  const size = details.size ? String(details.size).replace(/^from\s+/i, '') : '';
+  const description = details.excerpt || card.dataset.description || '';
+  const categories = Array.isArray(details.categories) ? details.categories.filter(Boolean) : [];
+
+  if (imageUrl && !card.dataset.imageUrl) {
+    const wrap = card.querySelector('.browse-thumb-wrap');
+    const existingChip = wrap.querySelector('.size-chip')?.outerHTML || '';
+    wrap.innerHTML = `<img class="browse-thumb" src="${esc(proxiedImage(imageUrl))}" alt="" loading="lazy" referrerpolicy="no-referrer">${existingChip}`;
+    card.dataset.imageUrl = imageUrl;
+  }
+
+  if (size) {
+    let chip = card.querySelector('.size-chip');
+    if (!chip) {
+      chip = document.createElement('span');
+      chip.className = 'size-chip';
+      card.querySelector('.browse-thumb-wrap').appendChild(chip);
+    }
+    chip.textContent = size;
+    card.dataset.size = size;
+  }
+
+  const excerpt = card.querySelector('.browse-card-excerpt');
+  if (excerpt && description) excerpt.textContent = description;
+  card.dataset.description = description;
+
+  const tags = card.querySelector('.card-tags');
+  if (tags && categories.length) {
+    tags.innerHTML = categories.slice(0, 3).map(c => `<span class="tag-chip">${esc(c)}</span>`).join('');
+    card.dataset.categories = categories.join('|');
+  }
+
+  card.dataset.hydrated = 'true';
+}
+
 async function addCard(card, button) {
   const title = card.dataset.title;
   const gameUrl = card.dataset.url;
   button.disabled = true;
+  if (card.dataset.hydrated !== 'true') {
+    button.textContent = 'Loading...';
+    await hydrateCard(card);
+  }
   button.textContent = 'Scraping...';
   const res = await API.req('/api/games', 'POST', {
     title,

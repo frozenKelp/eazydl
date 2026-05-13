@@ -52,6 +52,11 @@ a { color: inherit; text-decoration: none; }
 button, input, select { font: inherit; }
 button { color: inherit; }
 
+easy-shell {
+  display: block;
+  min-height: 100vh;
+}
+
 .app-shell {
   min-height: 100vh;
   display: grid;

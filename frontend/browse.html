@@ -6,111 +6,60 @@
   <title>EasyDL - Browse</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/css/style.css">
+  <script defer src="/js/components/app-shell.js"></script>
   <script defer src="/js/api.js"></script>
   <script defer src="/js/browse.js"></script>
 </head>
 <body data-page="browse">
-  <div class="app-shell">
-    <nav class="side-nav" aria-label="Primary navigation">
-      <a class="nav-logo" href="/library" aria-label="EasyDL library">
-        <span class="nav-logo-icon">ED</span>
-        <span class="brand-copy">
-          <span class="brand-name">EasyDL</span>
-          <span class="brand-subtitle">local download workspace</span>
-        </span>
-      </a>
+  <easy-shell page="browse" label="Browse" meta="covers, sizes, links">
+    <template data-shell-actions>
+      <form id="search-form" class="search-form">
+        <input id="search-input" type="search" placeholder="Search games" autocomplete="off">
+        <button class="btn btn-primary" type="submit"><span class="icon icon-browse" aria-hidden="true"></span><span>Search</span></button>
+        <button id="popular-btn" class="btn btn-ghost" type="button">Popular</button>
+      </form>
+    </template>
 
-      <div class="nav-section-title">Workspace</div>
-      <div class="nav-links">
-        <a class="nav-link" href="/library"><span class="icon icon-library" aria-hidden="true"></span><span>Library</span></a>
-        <a class="nav-link" href="/browse"><span class="icon icon-browse" aria-hidden="true"></span><span>Browse</span></a>
-        <a class="nav-link" href="/settings"><span class="icon icon-settings" aria-hidden="true"></span><span>Settings</span></a>
-      </div>
-
-      <div class="nav-section-title">Quick Access</div>
-      <div class="quick-links" aria-label="Quick access">
-        <a class="quick-link" href="/library"><span class="icon icon-path" aria-hidden="true"></span><span>Saved games</span></a>
-        <a class="quick-link" href="/browse"><span class="icon icon-browse" aria-hidden="true"></span><span>FitGirl index</span></a>
-      </div>
-
-      <div class="nav-spacer"></div>
-
-      <div class="nav-status">
-        <div class="status-caption"><span>aria2c</span><span id="nav-speed" class="nav-speed" aria-live="polite"></span></div>
-        <div class="aria2-pill"><span id="nav-dot" class="status-dot"></span><span id="nav-label">checking</span></div>
-      </div>
-    </nav>
-
-    <section class="app-workspace">
-      <header class="topbar">
-        <div class="tab-strip" aria-label="Open tabs">
-          <a class="nav-link tab-link" href="/library"><span class="icon icon-library" aria-hidden="true"></span><span>Library</span></a>
-          <a class="nav-link tab-link" href="/browse"><span class="icon icon-browse" aria-hidden="true"></span><span>Browse</span></a>
-          <a class="nav-link tab-link" href="/settings"><span class="icon icon-settings" aria-hidden="true"></span><span>Settings</span></a>
-        </div>
-        <div class="command-row">
-          <div class="address-bar" aria-label="Current location">
-            <span class="icon icon-path" aria-hidden="true"></span>
-            <span class="address-seg">EasyDL</span>
-            <span class="address-seg">/</span>
-            <strong>Browse</strong>
+    <main class="page browse-page">
+      <div class="workspace-grid">
+        <section class="main-pane">
+          <div class="pane-header">
+            <div class="pane-title"><span class="icon icon-browse" aria-hidden="true"></span><span>FitGirl Index</span></div>
+            <div class="pane-meta">fast results, lazy details</div>
           </div>
-          <form id="search-form" class="search-form">
-            <input id="search-input" type="search" placeholder="Search games" autocomplete="off">
-            <button class="btn btn-primary" type="submit"><span class="icon icon-browse" aria-hidden="true"></span><span>Search</span></button>
-            <button id="popular-btn" class="btn btn-ghost" type="button">Popular</button>
-          </form>
-        </div>
-      </header>
-
-      <main class="page browse-page">
-        <header class="page-header">
-          <div>
-            <p class="eyebrow">FitGirl</p>
-            <h1>Browse</h1>
+          <div class="pane-body">
+            <section id="browse-results" aria-live="polite">
+              <div class="loading"><span class="spinner"></span> Loading popular this year...</div>
+            </section>
           </div>
-        </header>
+        </section>
 
-        <div class="workspace-grid">
-          <section class="main-pane">
-            <div class="pane-header">
-              <div class="pane-title"><span class="icon icon-browse" aria-hidden="true"></span><span>FitGirl Index</span></div>
-              <div class="pane-meta">covers, sizes, links</div>
-            </div>
-            <div class="pane-body">
-              <section id="browse-results" aria-live="polite">
-                <div class="loading"><span class="spinner"></span> Loading popular this year...</div>
-              </section>
-            </div>
-          </section>
-
-          <aside class="utility-pane">
-            <div class="pane-header">
-              <div class="pane-title"><span class="icon icon-path" aria-hidden="true"></span><span>Sources</span></div>
-              <div class="pane-meta">remote</div>
-            </div>
-            <div class="pane-body utility-stack">
-              <section class="mini-section">
-                <div class="mini-title">Index</div>
-                <div class="mini-list">
-                  <div class="mini-row"><span>Source</span><strong>FitGirl</strong></div>
-                  <div class="mini-row"><span>Links</span><strong>FuckingFast</strong></div>
-                  <div class="mini-row"><span>Images</span><strong>proxied</strong></div>
-                </div>
-              </section>
-              <section class="mini-section">
-                <div class="mini-title">Add Flow</div>
-                <div class="mini-list">
-                  <div class="mini-row"><span>Entry</span><strong>library</strong></div>
-                  <div class="mini-row"><span>Files</span><strong>pending</strong></div>
-                  <div class="mini-row"><span>Queue</span><strong>optional</strong></div>
-                </div>
-              </section>
-            </div>
-          </aside>
-        </div>
-      </main>
-    </section>
-  </div>
+        <aside class="utility-pane">
+          <div class="pane-header">
+            <div class="pane-title"><span class="icon icon-path" aria-hidden="true"></span><span>Sources</span></div>
+            <div class="pane-meta">remote</div>
+          </div>
+          <div class="pane-body utility-stack">
+            <section class="mini-section">
+              <div class="mini-title">Index</div>
+              <div class="mini-list">
+                <div class="mini-row"><span>Source</span><strong>FitGirl</strong></div>
+                <div class="mini-row"><span>Links</span><strong>FuckingFast</strong></div>
+                <div class="mini-row"><span>Details</span><strong>lazy</strong></div>
+              </div>
+            </section>
+            <section class="mini-section">
+              <div class="mini-title">Add Flow</div>
+              <div class="mini-list">
+                <div class="mini-row"><span>Entry</span><strong>library</strong></div>
+                <div class="mini-row"><span>Files</span><strong>pending</strong></div>
+                <div class="mini-row"><span>Queue</span><strong>optional</strong></div>
+              </div>
+            </section>
+          </div>
+        </aside>
+      </div>
+    </main>
+  </easy-shell>
 </body>
 </html>

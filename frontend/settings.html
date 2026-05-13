@@ -6,185 +6,130 @@
   <title>EasyDL - Settings</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/css/style.css">
+  <script defer src="/js/components/app-shell.js"></script>
   <script defer src="/js/api.js"></script>
   <script defer src="/js/settings.js"></script>
 </head>
 <body data-page="settings">
-  <div class="app-shell">
-    <nav class="side-nav" aria-label="Primary navigation">
-      <a class="nav-logo" href="/library" aria-label="EasyDL library">
-        <span class="nav-logo-icon">ED</span>
-        <span class="brand-copy">
-          <span class="brand-name">EasyDL</span>
-          <span class="brand-subtitle">local download workspace</span>
-        </span>
-      </a>
+  <easy-shell page="settings" label="Settings" meta="preferences and runtime">
+    <main class="page settings-page">
+      <div class="workspace-grid single">
+        <form id="settings-form" class="settings-shell">
+          <aside class="settings-tabs" aria-label="Settings sections">
+            <button type="button" data-settings-tab="downloads">Downloads</button>
+            <button type="button" data-settings-tab="browse">Browse</button>
+            <button type="button" data-settings-tab="library">Library</button>
+            <button type="button" data-settings-tab="appearance">Appearance</button>
+            <button type="button" data-settings-tab="runtime">Runtime</button>
+          </aside>
 
-      <div class="nav-section-title">Workspace</div>
-      <div class="nav-links">
-        <a class="nav-link" href="/library"><span class="icon icon-library" aria-hidden="true"></span><span>Library</span></a>
-        <a class="nav-link" href="/browse"><span class="icon icon-browse" aria-hidden="true"></span><span>Browse</span></a>
-        <a class="nav-link" href="/settings"><span class="icon icon-settings" aria-hidden="true"></span><span>Settings</span></a>
-      </div>
-
-      <div class="nav-section-title">Quick Access</div>
-      <div class="quick-links" aria-label="Quick access">
-        <a class="quick-link" href="/library"><span class="icon icon-path" aria-hidden="true"></span><span>Saved games</span></a>
-        <a class="quick-link" href="/browse"><span class="icon icon-browse" aria-hidden="true"></span><span>FitGirl index</span></a>
-      </div>
-
-      <div class="nav-spacer"></div>
-
-      <div class="nav-status">
-        <div class="status-caption"><span>aria2c</span><span id="nav-speed" class="nav-speed" aria-live="polite"></span></div>
-        <div class="aria2-pill"><span id="nav-dot" class="status-dot"></span><span id="nav-label">checking</span></div>
-      </div>
-    </nav>
-
-    <section class="app-workspace">
-      <header class="topbar">
-        <div class="tab-strip" aria-label="Open tabs">
-          <a class="nav-link tab-link" href="/library"><span class="icon icon-library" aria-hidden="true"></span><span>Library</span></a>
-          <a class="nav-link tab-link" href="/browse"><span class="icon icon-browse" aria-hidden="true"></span><span>Browse</span></a>
-          <a class="nav-link tab-link" href="/settings"><span class="icon icon-settings" aria-hidden="true"></span><span>Settings</span></a>
-        </div>
-        <div class="command-row">
-          <div class="address-bar" aria-label="Current location">
-            <span class="icon icon-path" aria-hidden="true"></span>
-            <span class="address-seg">EasyDL</span>
-            <span class="address-seg">/</span>
-            <strong>Settings</strong>
-          </div>
-          <div class="pane-meta">preferences and runtime</div>
-        </div>
-      </header>
-
-      <main class="page settings-page">
-        <header class="page-header">
-          <div>
-            <p class="eyebrow">EasyDL</p>
-            <h1>Settings</h1>
-          </div>
-        </header>
-
-        <div class="workspace-grid single">
-          <form id="settings-form" class="settings-shell">
-            <aside class="settings-tabs" aria-label="Settings sections">
-              <button type="button" data-settings-tab="downloads">Downloads</button>
-              <button type="button" data-settings-tab="browse">Browse</button>
-              <button type="button" data-settings-tab="library">Library</button>
-              <button type="button" data-settings-tab="appearance">Appearance</button>
-              <button type="button" data-settings-tab="runtime">Runtime</button>
-            </aside>
-
-            <div class="settings-panels">
-              <section class="settings-panel" data-settings-panel="downloads">
-                <h2>Downloads</h2>
-                <div class="settings-row">
-                  <label class="settings-label" for="download_path"><strong>Download path</strong><span>Base folder</span></label>
-                  <span class="settings-control"><input id="download_path" name="download_path" type="text" placeholder="downloads"></span>
-                </div>
-                <div class="settings-row">
-                  <label class="settings-label" for="max_concurrent"><strong>Max concurrent files</strong><span>aria2c queue width</span></label>
-                  <span class="settings-control narrow"><input id="max_concurrent" name="max_concurrent" type="number" min="1" max="32" step="1"></span>
-                </div>
-                <div class="settings-row">
-                  <label class="settings-label" for="connections_per_file"><strong>Connections per file</strong><span>aria2c splits</span></label>
-                  <span class="settings-control narrow"><input id="connections_per_file" name="connections_per_file" type="number" min="1" max="16" step="1"></span>
-                </div>
-                <div class="settings-row">
-                  <label class="settings-label" for="auto_start_new_games"><strong>Auto-start new games</strong><span>After adding from Browse</span></label>
-                  <span class="settings-control switch-control"><input id="auto_start_new_games" name="auto_start_new_games" type="checkbox"></span>
-                </div>
-              </section>
-
-              <section class="settings-panel" data-settings-panel="browse" hidden>
-                <h2>Browse</h2>
-                <div class="settings-row">
-                  <label class="settings-label" for="browse_items_per_page"><strong>Items per page</strong><span>Popular and search</span></label>
-                  <span class="settings-control narrow"><input id="browse_items_per_page" name="browse_items_per_page" type="number" min="6" max="60" step="1"></span>
-                </div>
-                <div class="settings-row">
-                  <label class="settings-label" for="browse_card_size"><strong>Card size</strong><span>Browse grid</span></label>
-                  <span class="settings-control select-control">
-                    <select id="browse_card_size" name="browse_card_size">
-                      <option value="compact">Compact</option>
-                      <option value="medium">Medium</option>
-                      <option value="large">Large</option>
-                    </select>
-                  </span>
-                </div>
-                <div class="settings-row">
-                  <label class="settings-label" for="browse_show_descriptions"><strong>Descriptions</strong><span>Card text</span></label>
-                  <span class="settings-control switch-control"><input id="browse_show_descriptions" name="browse_show_descriptions" type="checkbox"></span>
-                </div>
-                <div class="settings-row">
-                  <label class="settings-label" for="browse_open_links_new_tab"><strong>Open links in new tab</strong><span>FitGirl pages</span></label>
-                  <span class="settings-control switch-control"><input id="browse_open_links_new_tab" name="browse_open_links_new_tab" type="checkbox"></span>
-                </div>
-              </section>
-
-              <section class="settings-panel" data-settings-panel="library" hidden>
-                <h2>Library</h2>
-                <div class="settings-row">
-                  <label class="settings-label" for="library_card_size"><strong>Card size</strong><span>Library grid</span></label>
-                  <span class="settings-control select-control">
-                    <select id="library_card_size" name="library_card_size">
-                      <option value="compact">Compact</option>
-                      <option value="medium">Medium</option>
-                      <option value="large">Large</option>
-                    </select>
-                  </span>
-                </div>
-                <div class="settings-row">
-                  <label class="settings-label" for="library_default_detail"><strong>Open first game</strong><span>Library launch</span></label>
-                  <span class="settings-control switch-control"><input id="library_default_detail" name="library_default_detail" type="checkbox"></span>
-                </div>
-                <div class="settings-row">
-                  <label class="settings-label" for="library_show_file_urls"><strong>Show file URLs</strong><span>Detail links</span></label>
-                  <span class="settings-control switch-control"><input id="library_show_file_urls" name="library_show_file_urls" type="checkbox"></span>
-                </div>
-                <div class="settings-row">
-                  <label class="settings-label" for="confirm_delete"><strong>Confirm deletes</strong><span>Games and links</span></label>
-                  <span class="settings-control switch-control"><input id="confirm_delete" name="confirm_delete" type="checkbox"></span>
-                </div>
-              </section>
-
-              <section class="settings-panel" data-settings-panel="appearance" hidden>
-                <h2>Appearance</h2>
-                <div class="settings-row">
-                  <label class="settings-label" for="interface_scale"><strong>Interface scale</strong><span id="scale-value">100%</span></label>
-                  <span class="settings-control"><input id="interface_scale" name="interface_scale" type="range" min="85" max="125" step="5"></span>
-                </div>
-                <div class="settings-row">
-                  <label class="settings-label" for="theme_density"><strong>Density</strong><span>Spacing</span></label>
-                  <span class="settings-control select-control">
-                    <select id="theme_density" name="theme_density">
-                      <option value="compact">Compact</option>
-                      <option value="comfortable">Comfortable</option>
-                      <option value="spacious">Spacious</option>
-                    </select>
-                  </span>
-                </div>
-                <div class="settings-row">
-                  <label class="settings-label" for="reduce_motion"><strong>Reduce motion</strong><span>Transitions</span></label>
-                  <span class="settings-control switch-control"><input id="reduce_motion" name="reduce_motion" type="checkbox"></span>
-                </div>
-              </section>
-
-              <section class="settings-panel" data-settings-panel="runtime" hidden>
-                <h2>Runtime</h2>
-                <div id="runtime-box" class="info-box">Loading status...</div>
-              </section>
-
-              <div class="settings-actions">
-                <button class="btn btn-primary" type="submit">Save Settings</button>
+          <div class="settings-panels">
+            <section class="settings-panel" data-settings-panel="downloads">
+              <h2>Downloads</h2>
+              <div class="settings-row">
+                <label class="settings-label" for="download_path"><strong>Download path</strong><span>Base folder</span></label>
+                <span class="settings-control"><input id="download_path" name="download_path" type="text" placeholder="downloads"></span>
               </div>
+              <div class="settings-row">
+                <label class="settings-label" for="max_concurrent"><strong>Max concurrent files</strong><span>aria2c queue width</span></label>
+                <span class="settings-control narrow"><input id="max_concurrent" name="max_concurrent" type="number" min="1" max="32" step="1"></span>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="connections_per_file"><strong>Connections per file</strong><span>aria2c splits</span></label>
+                <span class="settings-control narrow"><input id="connections_per_file" name="connections_per_file" type="number" min="1" max="16" step="1"></span>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="auto_start_new_games"><strong>Auto-start new games</strong><span>After adding from Browse</span></label>
+                <span class="settings-control switch-control"><input id="auto_start_new_games" name="auto_start_new_games" type="checkbox"></span>
+              </div>
+            </section>
+
+            <section class="settings-panel" data-settings-panel="browse" hidden>
+              <h2>Browse</h2>
+              <div class="settings-row">
+                <label class="settings-label" for="browse_items_per_page"><strong>Items per page</strong><span>Popular and search</span></label>
+                <span class="settings-control narrow"><input id="browse_items_per_page" name="browse_items_per_page" type="number" min="6" max="60" step="1"></span>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="browse_card_size"><strong>Card size</strong><span>Browse grid</span></label>
+                <span class="settings-control select-control">
+                  <select id="browse_card_size" name="browse_card_size">
+                    <option value="compact">Compact</option>
+                    <option value="medium">Medium</option>
+                    <option value="large">Large</option>
+                  </select>
+                </span>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="browse_show_descriptions"><strong>Descriptions</strong><span>Card text</span></label>
+                <span class="settings-control switch-control"><input id="browse_show_descriptions" name="browse_show_descriptions" type="checkbox"></span>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="browse_open_links_new_tab"><strong>Open links in new tab</strong><span>FitGirl pages</span></label>
+                <span class="settings-control switch-control"><input id="browse_open_links_new_tab" name="browse_open_links_new_tab" type="checkbox"></span>
+              </div>
+            </section>
+
+            <section class="settings-panel" data-settings-panel="library" hidden>
+              <h2>Library</h2>
+              <div class="settings-row">
+                <label class="settings-label" for="library_card_size"><strong>Card size</strong><span>Library grid</span></label>
+                <span class="settings-control select-control">
+                  <select id="library_card_size" name="library_card_size">
+                    <option value="compact">Compact</option>
+                    <option value="medium">Medium</option>
+                    <option value="large">Large</option>
+                  </select>
+                </span>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="library_default_detail"><strong>Open first game</strong><span>Library launch</span></label>
+                <span class="settings-control switch-control"><input id="library_default_detail" name="library_default_detail" type="checkbox"></span>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="library_show_file_urls"><strong>Show file URLs</strong><span>Detail links</span></label>
+                <span class="settings-control switch-control"><input id="library_show_file_urls" name="library_show_file_urls" type="checkbox"></span>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="confirm_delete"><strong>Confirm deletes</strong><span>Games and links</span></label>
+                <span class="settings-control switch-control"><input id="confirm_delete" name="confirm_delete" type="checkbox"></span>
+              </div>
+            </section>
+
+            <section class="settings-panel" data-settings-panel="appearance" hidden>
+              <h2>Appearance</h2>
+              <div class="settings-row">
+                <label class="settings-label" for="interface_scale"><strong>Interface scale</strong><span id="scale-value">100%</span></label>
+                <span class="settings-control"><input id="interface_scale" name="interface_scale" type="range" min="85" max="125" step="5"></span>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="theme_density"><strong>Density</strong><span>Spacing</span></label>
+                <span class="settings-control select-control">
+                  <select id="theme_density" name="theme_density">
+                    <option value="compact">Compact</option>
+                    <option value="comfortable">Comfortable</option>
+                    <option value="spacious">Spacious</option>
+                  </select>
+                </span>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="reduce_motion"><strong>Reduce motion</strong><span>Transitions</span></label>
+                <span class="settings-control switch-control"><input id="reduce_motion" name="reduce_motion" type="checkbox"></span>
+              </div>
+            </section>
+
+            <section class="settings-panel" data-settings-panel="runtime" hidden>
+              <h2>Runtime</h2>
+              <div id="runtime-box" class="info-box">Loading status...</div>
+            </section>
+
+            <div class="settings-actions">
+              <button class="btn btn-primary" type="submit">Save Settings</button>
             </div>
-          </form>
-        </div>
-      </main>
-    </section>
-  </div>
+          </div>
+        </form>
+      </div>
+    </main>
+  </easy-shell>
 </body>
 </html>
