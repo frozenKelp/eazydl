@@ -98,6 +98,7 @@ function renderBrowseCard(game) {
   const image = proxiedImage(game.image);
   const size = game.size ? String(game.size).replace(/^from\s+/i, '') : '';
   const categories = categoryString(game.categories);
+  const cats = Array.isArray(game.categories) ? game.categories.filter(Boolean).slice(0, 3) : [];
   const openTarget = boolSetting(browseSettings.browse_open_links_new_tab, true)
     ? 'target="_blank" rel="noopener"'
     : '';
@@ -116,6 +117,7 @@ function renderBrowseCard(game) {
     </div>
     <div class="browse-card-body">
       <h2 class="browse-card-title" title="${esc(game.title)}">${esc(game.title)}</h2>
+      <div class="card-tags">${cats.map(c => `<span class="tag-chip">${esc(c)}</span>`).join('')}</div>
       <p class="browse-card-excerpt">${esc(game.excerpt || 'No description available.')}</p>
       <div class="browse-card-actions">
         ${inLibrary

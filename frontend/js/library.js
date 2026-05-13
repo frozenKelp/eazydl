@@ -120,6 +120,7 @@ function renderLibraryCard(lst) {
   const action = gameAction(downloads);
   const image = proxiedImage(lst.image_url);
   const total = gameDisplaySize(lst, p);
+  const cats = (lst.categories || []).slice(0, 3);
 
   return `<article class="library-card" data-action="open-list" data-list-id="${lst.id}" tabindex="0">
     <div class="library-cover-wrap">
@@ -130,6 +131,7 @@ function renderLibraryCard(lst) {
     </div>
     <div class="library-card-body">
       <h2 class="library-card-title" title="${esc(lst.name)}">${esc(lst.name)}</h2>
+      <div class="card-tags">${cats.map(c => `<span class="tag-chip">${esc(c)}</span>`).join('')}</div>
       <div class="library-card-meta">
         <span data-card-files>${p.completed}/${downloads.length} files</span>
         <span data-card-pct>${p.pct.toFixed(0)}%</span>
@@ -154,7 +156,7 @@ function renderDetail(lst) {
 
   return `<section class="library-detail" data-list-id="${lst.id}">
     <aside class="detail-side">
-      <button class="back-link" data-action="back" type="button">&larr; Back</button>
+      <button class="back-link" data-action="back" type="button">&lt; Back</button>
       <div class="detail-cover-wrap">
         ${image
           ? `<img class="detail-cover" src="${esc(image)}" alt="" referrerpolicy="no-referrer">`
@@ -188,7 +190,15 @@ function renderDetail(lst) {
         <div class="game-progress-labels"><span data-detail-downloaded>${fmtBytes(p.downloaded)}</span><span data-detail-total-label>${total}</span></div>
       </div>
       <div class="file-list">
-        ${downloads.length ? downloads.map(renderFileRow).join('') : '<div class="empty-state"><p>No links found for this game.</p></div>'}
+        ${downloads.length ? `
+          <div class="file-head">
+            <span>Status</span>
+            <span>Name</span>
+            <span>Progress</span>
+            <span>Transfer</span>
+            <span>Actions</span>
+          </div>
+          ${downloads.map(renderFileRow).join('')}` : '<div class="empty-state"><p>No links found for this game.</p></div>'}
       </div>
     </div>
   </section>`;
