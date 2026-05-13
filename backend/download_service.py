@@ -174,9 +174,15 @@ async def queue_download_start(
 
     async with _starting_lock:
         live = dm.get_progress(dl.id)
+        is_starting = dl.id in _starting_downloads
         effective_status = (live.get("status") if live else None) or dl.status
-        if dl.id in _starting_downloads or effective_status in ("downloading", "queued"):
+        if is_starting or (live and effective_status in {"downloading", "queued"}):
             return "already_running"
+        if effective_status in {"downloading", "queued"}:
+            # Recover stale DB state left behind by a cancelled resolver task or
+            # server interruption. Without a live aria2 job or resolver task, a
+            # queued row is only cosmetic and should be startable again.
+            effective_status = "pending"
         if effective_status == "completed":
             return "completed"
         if effective_status == "paused" and not allow_paused:

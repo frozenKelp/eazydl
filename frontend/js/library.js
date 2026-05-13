@@ -4,6 +4,12 @@ let liveById = new Map();
 let selectedListId = null;
 let librarySettings = { ...SETTINGS_DEFAULTS };
 
+function getInitialSelectedListId() {
+  const params = new URLSearchParams(window.location.search);
+  const id = Number(params.get('listId'));
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
 const runningStatuses = new Set(['downloading', 'queued']);
 const startableStatuses = new Set(['pending', 'failed']);
 
@@ -38,6 +44,7 @@ async function loadLibrary() {
   downloadsByList = new Map();
   lists.forEach((lst) => downloadsByList.set(lst.id, lst.downloads || []));
 
+  if (!selectedListId) selectedListId = getInitialSelectedListId();
   if (selectedListId && !lists.some(l => l.id === selectedListId)) selectedListId = null;
   if (!selectedListId && boolSetting(librarySettings.library_default_detail) && lists.length) {
     selectedListId = lists[0].id;
@@ -144,15 +151,21 @@ function renderLibraryCard(lst) {
   </article>`;
 }
 
+function naturalSort(a, b) {
+  const nameA = (a.filename || a.url.split('/').pop() || '').toLowerCase();
+  const nameB = (b.filename || b.url.split('/').pop() || '').toLowerCase();
+  return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+}
+
 function renderDetail(lst) {
   const downloads = (downloadsByList.get(lst.id) || [])
-    .map(mergedDownload);
+    .map(mergedDownload)
+    .sort(naturalSort);
   const p = gameProgress(downloads);
   const action = gameAction(downloads);
   const image = proxiedImage(lst.image_url);
   const cats = (lst.categories || []).slice(0, 6);
   const total = gameDisplaySize(lst, p);
-  const description = lst.description || 'No description saved yet.';
 
   return `<section class="library-detail" data-list-id="${lst.id}">
     <aside class="detail-side">
@@ -169,7 +182,6 @@ function renderDetail(lst) {
         <span data-detail-pct>${p.pct.toFixed(0)}%</span>
       </div>
       <div class="detail-tags">${cats.map(c => `<span>${esc(c)}</span>`).join('')}</div>
-      <p class="detail-description">${esc(description)}</p>
       <button class="btn btn-primary btn-fw" data-action="toggle-game" data-detail-action type="button" ${action.disabled ? 'disabled' : ''}>${action.label}</button>
       ${lst.source_url ? `<a class="btn btn-ghost btn-fw" href="${esc(lst.source_url)}" target="_blank" rel="noopener">FitGirl page</a>` : ''}
       <button class="btn btn-danger btn-fw" data-action="delete-game" type="button">Delete</button>
@@ -254,6 +266,16 @@ function patchDownloads(ids, patch) {
       if (wanted.has(row.id)) Object.assign(row, patch);
     });
   });
+}
+
+function batchIds(res, key, fallbackIds = []) {
+  if (!res) return [];
+  if (Array.isArray(res[key])) {
+    return res[key].map(Number).filter(id => Number.isInteger(id) && id > 0);
+  }
+  const countKey = key.replace(/_ids$/, '');
+  const count = Math.max(0, Number(res[countKey] || 0));
+  return fallbackIds.slice(0, count);
 }
 
 function progressPct(dl) {
@@ -406,7 +428,11 @@ async function toggleDownload(dl) {
   if (runningStatuses.has(dl.status)) {
     return API.req(`/api/downloads/${dl.id}/pause`, 'POST');
   }
-  return startOrResume(dl);
+  const res = await startOrResume(dl);
+  if (!res && dl.status === 'paused') {
+    await API.req(`/api/downloads/${dl.id}/stop`, 'POST');
+  }
+  return res;
 }
 
 async function toggleGame(listId) {
@@ -430,18 +456,51 @@ async function toggleGame(listId) {
     toast('No files need starting', 'info');
     return;
   }
+  let queued = 0;
+  let resumed = 0;
+  let reset = 0;
+  let skipped = 0;
   if (paused.length) {
     const ids = paused.map(d => d.id);
-    await API.req('/api/downloads/batch/resume', 'POST', { ids });
-    patchDownloads(ids, { status: 'downloading' });
+    const res = await API.req('/api/downloads/batch/resume', 'POST', { ids });
+    if (res) {
+      const resumedIds = batchIds(res, 'resumed_ids', ids);
+      const queuedIds = batchIds(res, 'queued_ids', ids);
+      const resetIds = batchIds(res, 'reset_ids', ids);
+      if (resumedIds.length) {
+        patchDownloads(resumedIds, { status: 'queued', error_message: '' });
+        resumed += resumedIds.length;
+      }
+      if (queuedIds.length) {
+        patchDownloads(queuedIds, { status: 'queued', error_message: '' });
+        queued += queuedIds.length;
+      }
+      if (resetIds.length) {
+        patchDownloads(resetIds, { status: 'pending', bytes_downloaded: 0, speed: 0 });
+        reset += resetIds.length;
+      }
+      skipped += Number(res.skipped || 0);
+    }
   }
   if (startable.length) {
     const ids = startable.map(d => d.id);
-    await API.req('/api/downloads/batch/start', 'POST', { ids });
-    patchDownloads(ids, { status: 'queued', error_message: '' });
+    const res = await API.req('/api/downloads/batch/start', 'POST', { ids });
+    if (res) {
+      const queuedIds = batchIds(res, 'queued_ids', ids);
+      if (queuedIds.length) {
+        patchDownloads(queuedIds, { status: 'queued', error_message: '' });
+        queued += queuedIds.length;
+      }
+      skipped += Number(res.skipped || 0);
+    }
   }
   refreshLiveProgress();
-  toast(`Queued ${actionable.length} file(s)`, 'ok');
+  const messageParts = [];
+  if (resumed) messageParts.push(`${resumed} resumed`);
+  if (queued) messageParts.push(`${queued} queued`);
+  if (reset) messageParts.push(`${reset} reset`);
+  if (skipped && !messageParts.length) messageParts.push(`${skipped} skipped`);
+  toast(messageParts.length ? messageParts.join(' and ') : `Queued ${actionable.length} file(s)`, 'ok');
 }
 
 function confirmDelete(message) {

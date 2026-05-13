@@ -367,6 +367,7 @@ class Aria2Manager:
                 self._cache[dl_id]["status"] = "downloading"
         except Exception as exc:
             logger.warning("resume(%s) failed: %s", dl_id, exc)
+            raise  # Re-raise so API handlers can catch and handle
 
     async def stop(self, dl_id: int) -> None:
         gid = self._gid_map.get(dl_id)

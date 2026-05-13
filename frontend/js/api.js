@@ -1,8 +1,6 @@
 const SETTINGS_DEFAULTS = {
   browse_items_per_page: '24',
   browse_card_size: 'medium',
-  browse_show_descriptions: 'true',
-  browse_open_links_new_tab: 'true',
   library_card_size: 'medium',
   library_default_detail: 'false',
   library_show_file_urls: 'true',
@@ -59,6 +57,25 @@ const API = {
   },
 };
 
+function readableMessage(value) {
+  if (value === undefined || value === null || value === '') return '';
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    return value.map(readableMessage).filter(Boolean).join('; ');
+  }
+  if (typeof value === 'object') {
+    if (value.msg) return readableMessage(value.msg);
+    if (value.detail) return readableMessage(value.detail);
+    if (value.error) return readableMessage(value.error);
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
+}
+
 function updateNavStatus(aria2ok, downloads) {
   const dot = document.getElementById('nav-dot');
   const label = document.getElementById('nav-label');
@@ -83,7 +100,7 @@ function toast(msg, type = 'info') {
   }
   const el = document.createElement('div');
   el.className = `toast toast-${type === 'ok' ? 'ok' : type === 'err' ? 'err' : 'info'}`;
-  el.textContent = msg;
+  el.textContent = readableMessage(msg) || 'Request failed';
   c.appendChild(el);
   setTimeout(() => el.remove(), 4000);
 }
