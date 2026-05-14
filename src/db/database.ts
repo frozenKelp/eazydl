@@ -164,6 +164,8 @@ function seedDefaultSettings(): void {
   insertMany(Object.entries(defaults));
 }
 
+initDb();
+
 export const queries = {
   getLists: db.prepare<LinkListRow, []>(
     `SELECT * FROM link_lists ORDER BY created_at DESC`,
