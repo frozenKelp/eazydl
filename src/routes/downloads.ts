@@ -22,7 +22,7 @@ function uniqueIds(value: unknown): number[] {
 function rowsByIds(ids: number[]): DownloadRow[] {
   if (!ids.length) return [];
   const placeholders = ids.map(() => '?').join(',');
-  return db.prepare<unknown[], DownloadRow>(
+  return db.prepare<DownloadRow, number[]>(
     `SELECT * FROM downloads WHERE id IN (${placeholders})`,
   ).all(...ids);
 }
@@ -98,7 +98,7 @@ export function registerDownloadRoutes(app: FastifyInstance): void {
         skippedIds.push(dl.id);
         continue;
       }
-      db.prepare<[number]>(`UPDATE downloads SET status='paused' WHERE id=?`).run(dl.id);
+      db.prepare<unknown, [number]>(`UPDATE downloads SET status='paused' WHERE id=?`).run(dl.id);
       pausedIds.push(dl.id);
     }
 
@@ -145,12 +145,12 @@ export function registerDownloadRoutes(app: FastifyInstance): void {
       if (effectiveStatus === 'paused') {
         try {
           await dm.resume(dl.id);
-          db.prepare<[number]>(`UPDATE downloads SET status='downloading' WHERE id=?`).run(dl.id);
+          db.prepare<unknown, [number]>(`UPDATE downloads SET status='downloading' WHERE id=?`).run(dl.id);
           resumedIds.push(dl.id);
         } catch (err) {
           if (needsFreshStart(err instanceof Error ? err.message : String(err))) {
             await dm.stop(dl.id);
-            db.prepare<[string, number]>(
+            db.prepare<unknown, [string, number]>(
               `UPDATE downloads SET status='failed', bytes_downloaded=0, error_message=? WHERE id=?`,
             ).run('Resuming failed due to corrupted range data. Reset to pending.', dl.id);
             dl.status = 'failed';
@@ -173,7 +173,7 @@ export function registerDownloadRoutes(app: FastifyInstance): void {
       if (['error', 'failed'].includes(effectiveStatus) &&
         needsFreshStart(live?.error ?? dl.error_message)) {
         await dm.stop(dl.id);
-        db.prepare<[string, number]>(
+        db.prepare<unknown, [string, number]>(
           `UPDATE downloads SET status='failed', bytes_downloaded=0, error_message=? WHERE id=?`,
         ).run('Reset to pending due to corrupted range data.', dl.id);
         dl.status = 'failed';
@@ -243,7 +243,7 @@ export function registerDownloadRoutes(app: FastifyInstance): void {
     cancelStartingDownload(id);
     const pausedInAria = await dm.pause(id);
     if (!pausedInAria && !wasStarting) throw new HttpError(409, 'Download is no longer tracked by aria2c.');
-    db.prepare<[number]>(`UPDATE downloads SET status='paused' WHERE id=?`).run(id);
+    db.prepare<unknown, [number]>(`UPDATE downloads SET status='paused' WHERE id=?`).run(id);
     return { status: 'paused' };
   });
 
@@ -259,12 +259,12 @@ export function registerDownloadRoutes(app: FastifyInstance): void {
     if (effectiveStatus === 'paused') {
       try {
         await dm.resume(id);
-        db.prepare<[number]>(`UPDATE downloads SET status='downloading' WHERE id=?`).run(id);
+        db.prepare<unknown, [number]>(`UPDATE downloads SET status='downloading' WHERE id=?`).run(id);
         return { status: 'resumed' };
       } catch (err) {
         if (needsFreshStart(err instanceof Error ? err.message : String(err))) {
           await dm.stop(id);
-          db.prepare<[string, number]>(
+          db.prepare<unknown, [string, number]>(
             `UPDATE downloads SET status='failed', bytes_downloaded=0, error_message=? WHERE id=?`,
           ).run('Resuming failed due to corrupted range data. Reset to pending.', id);
           dl.status = 'failed';
@@ -281,7 +281,7 @@ export function registerDownloadRoutes(app: FastifyInstance): void {
     if (['error', 'failed'].includes(effectiveStatus) &&
       needsFreshStart(live?.error ?? dl.error_message)) {
       await dm.stop(id);
-      db.prepare<[string, number]>(
+      db.prepare<unknown, [string, number]>(
         `UPDATE downloads SET status='failed', bytes_downloaded=0, error_message=? WHERE id=?`,
       ).run('Reset to pending due to corrupted range data.', id);
       dl.status = 'failed';
@@ -304,7 +304,7 @@ export function registerDownloadRoutes(app: FastifyInstance): void {
     const id = Number.parseInt(dl_id, 10);
     cancelStartingDownload(id);
     await dm.stop(id);
-    db.prepare<[number]>(`UPDATE downloads SET status='pending' WHERE id=?`).run(id);
+    db.prepare<unknown, [number]>(`UPDATE downloads SET status='pending' WHERE id=?`).run(id);
     return { status: 'stopped' };
   });
 
@@ -315,7 +315,7 @@ export function registerDownloadRoutes(app: FastifyInstance): void {
     if (!dl) throw new HttpError(404, 'Download not found.');
     cancelStartingDownload(id);
     await dm.stop(id);
-    db.prepare<[number]>(`DELETE FROM downloads WHERE id=?`).run(id);
+    db.prepare<unknown, [number]>(`DELETE FROM downloads WHERE id=?`).run(id);
     return { status: 'deleted' };
   });
 }

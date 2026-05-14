@@ -1,5 +1,4 @@
 import type { FastifyInstance } from 'fastify';
-import fetch from 'node-fetch';
 import { MAX_IMAGE_BYTES } from '../config.js';
 import { HttpError, isPublicImageUrl } from '../security.js';
 
@@ -30,13 +29,23 @@ export function registerImageRoutes(app: FastifyInstance): void {
     if (!mediaType.startsWith('image/')) throw new HttpError(400, 'URL did not return an image.');
     if (!resp.body) throw new HttpError(502, 'Image response had no body.');
 
+    const reader = resp.body.getReader();
     const chunks: Buffer[] = [];
     let total = 0;
-    for await (const chunk of resp.body as AsyncIterable<Buffer | Uint8Array>) {
-      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      total += buf.length;
-      if (total > MAX_IMAGE_BYTES) throw new HttpError(413, 'Image is too large.');
-      chunks.push(buf);
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const buf = Buffer.from(value);
+        total += buf.length;
+        if (total > MAX_IMAGE_BYTES) {
+          await reader.cancel();
+          throw new HttpError(413, 'Image is too large.');
+        }
+        chunks.push(buf);
+      }
+    } finally {
+      reader.releaseLock();
     }
 
     return reply

@@ -3,7 +3,6 @@ import { execFile as execFileCallback } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { promisify } from 'util';
-import fetch from 'node-fetch';
 
 const execFile = promisify(execFileCallback);
 const RPC_URL = 'http://localhost:6800/jsonrpc';

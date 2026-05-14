@@ -29,7 +29,7 @@ export function registerLibraryRoutes(app: FastifyInstance): void {
     const name = body.name.trim();
     if (!name) throw new HttpError(400, 'List name cannot be empty.');
     if (queries.getListByName.get(name)) throw new HttpError(400, 'A list with that name already exists.');
-    const result = db.prepare<[string]>(`INSERT INTO link_lists (name) VALUES (?)`).run(name);
+    const result = db.prepare<unknown, [string]>(`INSERT INTO link_lists (name) VALUES (?)`).run(name);
     return reply.status(201).send({ id: result.lastInsertRowid, name });
   });
 
@@ -42,7 +42,7 @@ export function registerLibraryRoutes(app: FastifyInstance): void {
       cancelStartingDownload(dl.id);
       await dm.stop(dl.id);
     }
-    db.prepare<[number]>(`DELETE FROM link_lists WHERE id=?`).run(list.id);
+    db.prepare<unknown, [number]>(`DELETE FROM link_lists WHERE id=?`).run(list.id);
     return { status: 'deleted' };
   });
 
@@ -59,11 +59,11 @@ export function registerLibraryRoutes(app: FastifyInstance): void {
     if (!queries.getListById.get(id)) throw new HttpError(404, 'List not found.');
     const urls = Array.isArray(body.urls) ? body.urls.slice(0, 200) : [];
     const existing = new Set(
-      db.prepare<[number], { source_url: string }>(
+      db.prepare<{ source_url: string }, [number]>(
         `SELECT source_url FROM downloads WHERE list_id=?`,
       ).all(id).map(row => row.source_url),
     );
-    const insert = db.prepare<[number, string]>(
+    const insert = db.prepare<unknown, [number, string]>(
       `INSERT OR IGNORE INTO downloads (list_id, source_url, status) VALUES (?, ?, 'pending')`,
     );
 
@@ -94,18 +94,18 @@ export function registerLibraryRoutes(app: FastifyInstance): void {
 
     let list = queries.getListByName.get(title);
     if (!list) {
-      const result = db.prepare<[string]>(`INSERT INTO link_lists (name) VALUES (?)`).run(title);
+      const result = db.prepare<unknown, [string]>(`INSERT INTO link_lists (name) VALUES (?)`).run(title);
       list = queries.getListById.get(Number(result.lastInsertRowid));
     }
     if (!list) throw new HttpError(500, 'Could not create library item.');
 
     const categories = (body.categories ?? []).map(cat => cat.trim()).filter(Boolean);
     const size = (body.size ?? '').replace(/^from\s+/i, '').trim().slice(0, 80);
-    if (gameUrl && !list.source_url) db.prepare<[string, number]>(`UPDATE link_lists SET source_url=? WHERE id=?`).run(gameUrl, list.id);
-    if (body.image_url && !list.image_url) db.prepare<[string, number]>(`UPDATE link_lists SET image_url=? WHERE id=?`).run(body.image_url.trim(), list.id);
-    if (body.description && !list.description) db.prepare<[string, number]>(`UPDATE link_lists SET description=? WHERE id=?`).run(body.description.trim().slice(0, 2000), list.id);
-    if (size && !list.size) db.prepare<[string, number]>(`UPDATE link_lists SET size=? WHERE id=?`).run(size, list.id);
-    if (categories.length && !list.categories) db.prepare<[string, number]>(`UPDATE link_lists SET categories=? WHERE id=?`).run(categories.slice(0, 12).join('|'), list.id);
+    if (gameUrl && !list.source_url) db.prepare<unknown, [string, number]>(`UPDATE link_lists SET source_url=? WHERE id=?`).run(gameUrl, list.id);
+    if (body.image_url && !list.image_url) db.prepare<unknown, [string, number]>(`UPDATE link_lists SET image_url=? WHERE id=?`).run(body.image_url.trim(), list.id);
+    if (body.description && !list.description) db.prepare<unknown, [string, number]>(`UPDATE link_lists SET description=? WHERE id=?`).run(body.description.trim().slice(0, 2000), list.id);
+    if (size && !list.size) db.prepare<unknown, [string, number]>(`UPDATE link_lists SET size=? WHERE id=?`).run(size, list.id);
+    if (categories.length && !list.categories) db.prepare<unknown, [string, number]>(`UPDATE link_lists SET categories=? WHERE id=?`).run(categories.slice(0, 12).join('|'), list.id);
 
     let downloads: Array<{ url: string; filename: string | null }>;
     try {
@@ -118,10 +118,10 @@ export function registerLibraryRoutes(app: FastifyInstance): void {
       queries.getDownloadsForList.all(list.id).map(dl => [dl.source_url, dl]),
     );
     const alreadyHad = existingRows.size;
-    const insert = db.prepare<[number, string, string]>(
+    const insert = db.prepare<unknown, [number, string, string]>(
       `INSERT OR IGNORE INTO downloads (list_id, source_url, filename, status) VALUES (?, ?, ?, 'pending')`,
     );
-    const updateFilename = db.prepare<[string, number]>(
+    const updateFilename = db.prepare<unknown, [string, number]>(
       `UPDATE downloads SET filename=? WHERE id=?`,
     );
 

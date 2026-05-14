@@ -1,6 +1,5 @@
 import * as cheerio from 'cheerio';
 import type { CheerioAPI } from 'cheerio';
-import fetch from 'node-fetch';
 import type { AnyNode, Element } from 'domhandler';
 import { FUCKINGFAST_HOSTS, FITGIRL_HOSTS } from './config.js';
 

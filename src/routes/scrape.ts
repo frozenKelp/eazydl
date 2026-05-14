@@ -19,11 +19,11 @@ export function registerScrapeRoutes(app: FastifyInstance): void {
     }
 
     const existing = new Set(
-      db.prepare<[number], { source_url: string }>(
+      db.prepare<{ source_url: string }, [number]>(
         `SELECT source_url FROM downloads WHERE list_id=?`,
       ).all(listId).map(row => row.source_url),
     );
-    const insert = db.prepare<[number, string, string]>(
+    const insert = db.prepare<unknown, [number, string, string]>(
       `INSERT OR IGNORE INTO downloads (list_id, source_url, filename, status) VALUES (?, ?, ?, 'pending')`,
     );
     let added = 0;

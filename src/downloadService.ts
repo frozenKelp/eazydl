@@ -58,7 +58,7 @@ export function isStartingDownload(dlId: number): boolean {
 
 function markDownloadFailed(dlId: number, message: string): void {
   if (startWasCancelled(dlId)) return;
-  db.prepare<[string, number]>(
+  db.prepare<unknown, [string, number]>(
     `UPDATE downloads SET status='failed', error_message=? WHERE id=?`,
   ).run(message.slice(0, 500), dlId);
 }
@@ -99,13 +99,13 @@ export async function resolveAndStart(
 
         const latest = queries.getDownloadById.get(dlId);
         if (!latest || latest.status !== 'queued' || startWasCancelled(dlId)) return;
-        db.prepare<[string, string, number]>(
+        db.prepare<unknown, [string, string, number]>(
           `UPDATE downloads SET resolved_url=?, filename=? WHERE id=?`,
         ).run(actualUrl, filename, dlId);
       } catch (err) {
         if (!startWasCancelled(dlId)) {
           const msg = err instanceof Error ? err.message : String(err);
-          db.prepare<[string, number]>(
+          db.prepare<unknown, [string, number]>(
             `UPDATE downloads SET status='failed', error_message=? WHERE id=?`,
           ).run(msg.slice(0, 500), dlId);
         }
@@ -123,7 +123,7 @@ export async function resolveAndStart(
       if (!isTerminal && now - lastDbWrite < PROGRESS_DB_WRITE_INTERVAL_MS) return;
       lastDbWrite = now;
 
-      db.prepare<[string, number, number, string, string, string | null, string | null, number]>(`
+      db.prepare<unknown, [string, number, number, string, string, string | null, string | null, number]>(`
         UPDATE downloads
         SET status=?,
             bytes_downloaded=?,
@@ -183,7 +183,7 @@ export async function queueDownloadStart(
   const freshStart = effectiveStatus === 'failed' ||
     needsFreshStart(live?.error ?? dl.error_message);
 
-  db.prepare<[number, number]>(`
+  db.prepare<unknown, [number, number]>(`
     UPDATE downloads
     SET status='queued',
         error_message=NULL,
@@ -194,7 +194,7 @@ export async function queueDownloadStart(
   cancelledStarts.delete(dl.id);
   startingDownloads.add(dl.id);
 
-  const listRow = db.prepare<[number], { name: string }>(
+  const listRow = db.prepare<{ name: string }, [number]>(
     `SELECT name FROM link_lists WHERE id=?`,
   ).get(dl.list_id);
   const listName = listRow?.name ?? 'default';

@@ -1,16 +1,16 @@
 import fs from 'fs';
 import path from 'path';
+import { Database } from 'bun:sqlite';
 import { DATA_DIR, DOWNLOADS_DIR } from '../config.js';
-import { SqliteDatabase } from './sqlite.js';
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
 
 const DB_PATH = path.join(DATA_DIR, 'downloader.db');
 
-export const db = new SqliteDatabase(DB_PATH);
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+export const db = new Database(DB_PATH);
+db.run('PRAGMA journal_mode = WAL');
+db.run('PRAGMA foreign_keys = ON');
 
 export interface LinkListRow {
   id: number;
@@ -43,7 +43,7 @@ export interface SettingRow {
 }
 
 export function initDb(): void {
-  db.exec(`
+  db.run(`
     CREATE TABLE IF NOT EXISTS link_lists (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       name        TEXT    UNIQUE NOT NULL,
@@ -87,7 +87,7 @@ export function initDb(): void {
 
 function runMigrations(): void {
   const existingCols = new Set(
-    (db.pragma('table_info(link_lists)') as Array<{ name: string }>).map(r => r.name),
+    db.query<{ name: string }, []>('PRAGMA table_info(link_lists)').all().map(r => r.name),
   );
   const needed: Record<string, string> = {
     source_url: 'TEXT',
@@ -99,7 +99,7 @@ function runMigrations(): void {
 
   for (const [col, type] of Object.entries(needed)) {
     if (!existingCols.has(col)) {
-      db.exec(`ALTER TABLE link_lists ADD COLUMN ${col} ${type}`);
+      db.run(`ALTER TABLE link_lists ADD COLUMN ${col} ${type}`);
     }
   }
 }
@@ -113,7 +113,7 @@ function createDownloadUniqueIndex(): void {
   `);
   const createIndex = db.transaction(() => {
     deleteDuplicates.run();
-    db.exec(`
+    db.run(`
       CREATE UNIQUE INDEX IF NOT EXISTS ux_downloads_list_source
       ON downloads (list_id, source_url)
     `);
@@ -155,7 +155,7 @@ function seedDefaultSettings(): void {
     theme_density: 'comfortable',
     reduce_motion: 'false',
   };
-  const insert = db.prepare<[string, string]>(
+  const insert = db.prepare<unknown, [string, string]>(
     `INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`,
   );
   const insertMany = db.transaction((entries: [string, string][]) => {
@@ -165,28 +165,28 @@ function seedDefaultSettings(): void {
 }
 
 export const queries = {
-  getLists: db.prepare<[], LinkListRow>(
+  getLists: db.prepare<LinkListRow, []>(
     `SELECT * FROM link_lists ORDER BY created_at DESC`,
   ),
-  getListById: db.prepare<[number], LinkListRow>(
+  getListById: db.prepare<LinkListRow, [number]>(
     `SELECT * FROM link_lists WHERE id = ?`,
   ),
-  getListByName: db.prepare<[string], LinkListRow>(
+  getListByName: db.prepare<LinkListRow, [string]>(
     `SELECT * FROM link_lists WHERE name = ?`,
   ),
-  getDownloadsForList: db.prepare<[number], DownloadRow>(
+  getDownloadsForList: db.prepare<DownloadRow, [number]>(
     `SELECT * FROM downloads WHERE list_id = ? ORDER BY created_at ASC`,
   ),
-  getDownloadById: db.prepare<[number], DownloadRow>(
+  getDownloadById: db.prepare<DownloadRow, [number]>(
     `SELECT * FROM downloads WHERE id = ?`,
   ),
-  getAllSettings: db.prepare<[], SettingRow>(
+  getAllSettings: db.prepare<SettingRow, []>(
     `SELECT * FROM settings`,
   ),
-  getSetting: db.prepare<[string], SettingRow>(
+  getSetting: db.prepare<SettingRow, [string]>(
     `SELECT * FROM settings WHERE key = ?`,
   ),
-  upsertSetting: db.prepare<[string, string]>(
+  upsertSetting: db.prepare<unknown, [string, string]>(
     `INSERT INTO settings (key, value) VALUES (?, ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
   ),

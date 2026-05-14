@@ -61,7 +61,5 @@ eazydl-node/
 ## Notes
 
 The database schema is unchanged, and `data/downloader.db` can be copied
-directly from the Python project. Bun on Windows currently refuses to load the
-native `better-sqlite3` binding, so the database module uses a small synchronous
-adapter over Bun's native SQLite API with the same `prepare/get/all/run`
-calling style used by the port.
+directly from the Python project. The backend uses Bun's native `bun:sqlite`
+driver, so there is no separate SQLite native addon to install.
