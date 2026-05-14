@@ -3,6 +3,9 @@ let downloadsByList = new Map();
 let liveById = new Map();
 let selectedListId = null;
 let librarySettings = { ...SETTINGS_DEFAULTS };
+let libraryScrollY = 0;
+let loadingLibrary = false;
+let libraryFilter = '';
 
 function getInitialSelectedListId() {
   const params = new URLSearchParams(window.location.search);
@@ -36,9 +39,12 @@ async function loadLibrarySettings() {
 }
 
 async function loadLibrary() {
+  if (loadingLibrary) return;
+  loadingLibrary = true;
   const root = document.getElementById('library');
   root.innerHTML = '<div class="loading"><span class="spinner"></span> Loading library...</div>';
   const data = await API.req('/api/library');
+  loadingLibrary = false;
   if (!data) return;
   lists = data.lists || [];
   downloadsByList = new Map();
@@ -76,12 +82,13 @@ function gameProgress(downloads) {
   const downloaded = merged.reduce((s, d) => s + (d.bytes_downloaded || 0), 0);
   const completed = merged.filter(d => d.status === 'completed').length;
   const allSized = merged.every(d => d.total_bytes > 0);
-  const pct = allSized && total ? downloaded / total * 100 : completed / downloads.length * 100;
+  const pct = total ? downloaded / total * 100 : 0;
   return { pct, downloaded, total, completed, allSized };
 }
 
 function gameAction(downloads) {
   const merged = downloads.map(mergedDownload);
+  if (!window.aria2Online && merged.some(d => d.status !== 'completed')) return { label: 'Offline', disabled: true };
   if (merged.some(d => runningStatuses.has(d.status))) return { label: 'Pause', disabled: false };
   if (merged.some(d => d.status === 'failed')) return { label: 'Retry', disabled: false };
   if (merged.some(d => d.status === 'paused')) return { label: 'Resume', disabled: false };
@@ -117,8 +124,20 @@ function renderLibrary() {
     }
   }
 
+  const visible = libraryFilter
+    ? lists.filter(lst => String(lst.name || '').toLowerCase().includes(libraryFilter))
+    : lists;
+  if (!visible.length) {
+    root.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">Filter</div>
+        <h3>No matching games</h3>
+        <p>Clear the library filter to show everything.</p>
+      </div>`;
+    return;
+  }
   const sizeClass = `card-size-${librarySettings.library_card_size || 'medium'}`;
-  root.innerHTML = `<div class="library-grid ${sizeClass}">${lists.map(renderLibraryCard).join('')}</div>`;
+  root.innerHTML = `<div class="library-grid ${sizeClass}">${visible.map(renderLibraryCard).join('')}</div>`;
 }
 
 function renderLibraryCard(lst) {
@@ -143,7 +162,7 @@ function renderLibraryCard(lst) {
         <span data-card-files>${p.completed}/${downloads.length} files</span>
         <span data-card-pct>${p.pct.toFixed(0)}%</span>
       </div>
-      <div class="progress-track"><div class="progress-fill" data-card-fill style="width:${Math.min(100, p.pct).toFixed(1)}%"></div></div>
+      <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.min(100, p.pct).toFixed(0)}"><div class="progress-fill" data-card-fill style="width:${Math.min(100, p.pct).toFixed(1)}%"></div></div>
       <div class="library-card-actions">
         <button class="btn btn-primary btn-sm" data-action="toggle-game" data-card-action type="button" ${action.disabled ? 'disabled' : ''}>${action.label}</button>
       </div>
@@ -182,6 +201,7 @@ function renderDetail(lst) {
         <span data-detail-pct>${p.pct.toFixed(0)}%</span>
       </div>
       <div class="detail-tags">${cats.map(c => `<span>${esc(c)}</span>`).join('')}</div>
+      ${lst.description ? `<p class="detail-description">${esc(lst.description)}</p>` : ''}
       <button class="btn btn-primary btn-fw" data-action="toggle-game" data-detail-action type="button" ${action.disabled ? 'disabled' : ''}>${action.label}</button>
       ${lst.source_url ? `<a class="btn btn-ghost btn-fw" href="${esc(lst.source_url)}" target="_blank" rel="noopener">FitGirl page</a>` : ''}
       <button class="btn btn-danger btn-fw" data-action="delete-game" type="button">Delete</button>
@@ -198,7 +218,7 @@ function renderDetail(lst) {
         </div>
       </div>
       <div class="detail-progress">
-        <div class="progress-track"><div class="progress-fill" data-detail-fill style="width:${Math.min(100, p.pct).toFixed(1)}%"></div></div>
+        <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.min(100, p.pct).toFixed(0)}"><div class="progress-fill" data-detail-fill style="width:${Math.min(100, p.pct).toFixed(1)}%"></div></div>
         <div class="game-progress-labels"><span data-detail-downloaded>${fmtBytes(p.downloaded)}</span><span data-detail-total-label>${total}</span></div>
       </div>
       <div class="file-list">
@@ -229,21 +249,21 @@ function renderFileRow(dl) {
         : dl.status === 'failed'
           ? 'Retry'
           : 'Start';
-  const disabled = dl.status === 'completed' ? 'disabled' : '';
+  const disabled = dl.status === 'completed' || !window.aria2Online ? 'disabled' : '';
   const showUrl = boolSetting(librarySettings.library_show_file_urls, true);
 
-  return `<div class="file-row" data-dl-id="${dl.id}">
-    <span class="badge badge-${esc(dl.status)}" data-file-status>${esc(dl.status)}</span>
-    <div class="file-main">
+  return `<div class="file-row" data-dl-id="${dl.id}" aria-live="polite">
+    <span class="badge badge-${esc(dl.status)}" data-file-status data-label="Status">${esc(dl.status)}</span>
+    <div class="file-main" data-label="Name">
       <div class="file-name" data-file-name title="${esc(name)}">${esc(name)}</div>
       ${showUrl ? `<button class="file-url file-url-button" data-action="open-file-url" data-url="${esc(dl.url)}" type="button" title="Open source link">${esc(dl.url)}</button>` : ''}
     </div>
-    <div class="file-bar"><div class="progress-track"><div class="progress-fill ${fillClass}" data-file-fill style="width:${Math.min(100, pct).toFixed(1)}%"></div></div></div>
-    <div class="file-details">
+    <div class="file-bar" data-label="Progress"><div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.min(100, pct).toFixed(0)}"><div class="progress-fill ${fillClass}" data-file-fill style="width:${Math.min(100, pct).toFixed(1)}%"></div></div></div>
+    <div class="file-details" data-label="Transfer">
       <span data-file-bytes>${fmtBytes(dl.bytes_downloaded)} / ${fmtBytes(dl.total_bytes, 'Unknown')}</span>
       <span data-file-speed>${dl.speed ? fmtSpeed(dl.speed) : '-'}</span>
     </div>
-    <div class="file-actions">
+    <div class="file-actions" data-label="Actions">
       <button class="btn btn-primary btn-xs" data-action="toggle-file" data-file-action type="button" ${disabled}>${actionLabel}</button>
       <button class="btn btn-danger btn-xs" data-action="delete-file" type="button">Delete</button>
     </div>
@@ -273,9 +293,7 @@ function batchIds(res, key, fallbackIds = []) {
   if (Array.isArray(res[key])) {
     return res[key].map(Number).filter(id => Number.isInteger(id) && id > 0);
   }
-  const countKey = key.replace(/_ids$/, '');
-  const count = Math.max(0, Number(res[countKey] || 0));
-  return fallbackIds.slice(0, count);
+  return [];
 }
 
 function progressPct(dl) {
@@ -303,6 +321,23 @@ function setToolbarAction(button, action) {
   if (!button) return;
   button.textContent = `${action.label} All`;
   button.disabled = action.disabled;
+}
+
+function patchForToggleResponse(dl, res) {
+  if (!res) return null;
+  if (res.status === 'paused') {
+    return { status: 'paused', speed: 0 };
+  }
+  if (res.status === 'reset') {
+    return { status: 'pending', bytes_downloaded: 0, speed: 0, error_message: res.error || '' };
+  }
+  if (['queued', 'resumed', 'already_running'].includes(res.status)) {
+    return { status: 'queued', error_message: '' };
+  }
+  if (runningStatuses.has(dl.status)) {
+    return { status: 'paused', speed: 0 };
+  }
+  return { status: 'queued', error_message: '' };
 }
 
 function updateLibraryCard(lst) {
@@ -359,7 +394,10 @@ function updateFileRow(row, dl) {
   if (fill) {
     const fillClass = fillClassForStatus(status);
     fill.className = `progress-fill ${fillClass}`.trim();
-    fill.style.width = `${Math.min(100, pct).toFixed(1)}%`;
+    const current = Number.parseFloat(fill.style.width || '0') || 0;
+    const next = Math.min(100, pct);
+    fill.style.width = `${Math.max(current, next).toFixed(1)}%`;
+    fill.closest('.progress-track')?.setAttribute('aria-valuenow', String(Math.max(current, next).toFixed(0)));
   }
   if (bytes) {
     bytes.textContent = `${fmtBytes(dl.bytes_downloaded)} / ${fmtBytes(dl.total_bytes, 'Unknown')}`;
@@ -367,7 +405,8 @@ function updateFileRow(row, dl) {
   if (speed) speed.textContent = dl.speed ? fmtSpeed(dl.speed) : '-';
   if (action) {
     action.textContent = actionLabel;
-    action.disabled = status === 'completed';
+    action.disabled = status === 'completed' || !window.aria2Online;
+    action.title = !window.aria2Online && status !== 'completed' ? 'aria2c is offline' : '';
   }
   if (error) {
     error.textContent = dl.error_message || '';
@@ -398,7 +437,10 @@ function updateDetailView(lst) {
   setText('[data-detail-total-label]', total);
 
   const fill = detail.querySelector('[data-detail-fill]');
-  if (fill) fill.style.width = `${Math.min(100, p.pct).toFixed(1)}%`;
+  if (fill) {
+    fill.style.width = `${Math.min(100, p.pct).toFixed(1)}%`;
+    fill.closest('.progress-track')?.setAttribute('aria-valuenow', String(Math.min(100, p.pct).toFixed(0)));
+  }
   setGameAction(detail.querySelector('[data-detail-action]'), action);
   setToolbarAction(detail.querySelector('[data-detail-toolbar-action]'), action);
 
@@ -517,6 +559,7 @@ async function handleAction(e) {
 
   if (action === 'open-list') {
     selectedListId = listId;
+    libraryScrollY = window.scrollY;
     renderLibrary();
     return;
   }
@@ -526,6 +569,7 @@ async function handleAction(e) {
   if (action === 'back') {
     selectedListId = null;
     renderLibrary();
+    requestAnimationFrame(() => window.scrollTo(0, libraryScrollY));
     return;
   }
   if (action === 'refresh') {
@@ -556,14 +600,11 @@ async function handleAction(e) {
     if (!dl) return;
     const ok = await toggleDownload(dl);
     if (ok) {
-      const nextStatus = runningStatuses.has(dl.status)
-        ? 'paused'
-        : dl.status === 'paused'
-          ? 'downloading'
-          : 'queued';
-      patchDownloads([id], { status: nextStatus, speed: 0 });
+      const patch = patchForToggleResponse(dl, ok);
+      if (patch) patchDownloads([id], patch);
       refreshLiveProgress();
-      toast(`${nextStatus === 'paused' ? 'Paused' : 'Queued'} 1 file`, 'ok');
+      const label = patch?.status === 'paused' ? 'Paused' : patch?.status === 'pending' ? 'Reset' : 'Queued';
+      toast(`${label} 1 file`, 'ok');
     }
     return;
   }
@@ -581,6 +622,10 @@ async function handleAction(e) {
 document.addEventListener('DOMContentLoaded', async () => {
   await loadLibrarySettings();
   document.getElementById('refresh-btn').addEventListener('click', loadLibrary);
+  document.getElementById('library-filter')?.addEventListener('input', (e) => {
+    libraryFilter = e.target.value.trim().toLowerCase();
+    if (!selectedListId) renderLibrary();
+  });
   document.getElementById('library').addEventListener('click', handleAction);
   document.getElementById('library').addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ') return;

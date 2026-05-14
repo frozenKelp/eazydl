@@ -137,22 +137,27 @@ def api_add_game(data: GameAdd, db: Session = Depends(get_db)):
         for d in db.query(Download).filter(Download.list_id == lst.id).all()
     }
     added = 0
+    added_ids = []
+    download_ids = []
     for item in downloads:
         url = clean_url(item["url"], FUCKINGFAST_HOSTS, "download link")
         filename = clean_filename(item.get("filename"))
         if existing := existing_rows.get(url):
             if filename and not existing.filename:
                 existing.filename = filename
+            download_ids.append(existing.id)
             continue
-        db.add(
-            Download(
-                list_id=lst.id,
-                source_url=url,
-                filename=filename or "",
-                status="pending",
-            )
+        dl = Download(
+            list_id=lst.id,
+            source_url=url,
+            filename=filename or "",
+            status="pending",
         )
+        db.add(dl)
+        db.flush()
         added += 1
+        added_ids.append(dl.id)
+        download_ids.append(dl.id)
     try:
         db.commit()
     except IntegrityError:
@@ -165,4 +170,6 @@ def api_add_game(data: GameAdd, db: Session = Depends(get_db)):
         "found": len(downloads),
         "added": added,
         "already_had": len(existing_rows),
+        "download_ids": download_ids,
+        "added_ids": added_ids,
     }

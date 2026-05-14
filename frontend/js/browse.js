@@ -12,6 +12,15 @@ const hydrationPromises = new Map();
 const detailQueue = [];
 let activeHydrations = 0;
 const maxDetailHydrations = 4;
+const detailCacheLimit = 200;
+
+function rememberDetail(url, details) {
+  if (detailCache.has(url)) detailCache.delete(url);
+  detailCache.set(url, details);
+  while (detailCache.size > detailCacheLimit) {
+    detailCache.delete(detailCache.keys().next().value);
+  }
+}
 
 async function refreshKnownTitles() {
   const lists = await API.req('/api/lists');
@@ -112,7 +121,7 @@ function renderBrowseCard(game) {
   const image = proxiedImage(game.image);
   const size = game.size ? String(game.size).replace(/^from\s+/i, '') : '';
   const cats = Array.isArray(game.categories) ? game.categories.filter(Boolean).slice(0, 3) : [];
-  return `<article class="browse-card"
+  return `<article class="browse-card" tabindex="0" role="button"
       data-title="${esc(title)}"
       data-url="${esc(game.url)}"
       data-image-url="${esc(game.image || '')}"
@@ -122,7 +131,7 @@ function renderBrowseCard(game) {
       data-hydrated="${game.excerpt && game.size ? 'true' : 'false'}">
     <div class="browse-thumb-wrap">
       ${image
-        ? `<img class="browse-thumb" src="${esc(image)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'browse-thumb-placeholder',textContent:'No image'}))">`
+        ? `<img class="browse-thumb is-loading" src="${esc(image)}" alt="" loading="lazy" referrerpolicy="no-referrer" onload="this.classList.remove('is-loading')" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'browse-thumb-placeholder',textContent:'No image'}))">`
         : '<div class="browse-thumb-placeholder">No image</div>'}
       ${size ? `<span class="size-chip">${esc(size)}</span>` : ''}
     </div>
@@ -206,7 +215,7 @@ async function hydrateCard(card) {
     return false;
   }
 
-  detailCache.set(url, details);
+  rememberDetail(url, details);
   applyCardDetails(card, details);
   return true;
 }
@@ -219,7 +228,7 @@ function applyCardDetails(card, details) {
   if (imageUrl && !card.dataset.imageUrl) {
     const wrap = card.querySelector('.browse-thumb-wrap');
     const existingChip = wrap.querySelector('.size-chip')?.outerHTML || '';
-    wrap.innerHTML = `<img class="browse-thumb" src="${esc(proxiedImage(imageUrl))}" alt="" loading="lazy" referrerpolicy="no-referrer">${existingChip}`;
+    wrap.innerHTML = `<img class="browse-thumb is-loading" src="${esc(proxiedImage(imageUrl))}" alt="" loading="lazy" referrerpolicy="no-referrer" onload="this.classList.remove('is-loading')">${existingChip}`;
     card.dataset.imageUrl = imageUrl;
   }
 
@@ -241,6 +250,7 @@ function applyCardDetails(card, details) {
   }
 
   card.dataset.hydrated = 'true';
+  if (selectedBrowseCard === card) renderBrowseDetail(card);
 }
 
 function openBrowseLibrary(card) {
@@ -335,10 +345,9 @@ async function addCard(card, button) {
   updateBrowseCardLibraryState(card, res.id);
 
   if (boolSetting(browseSettings.auto_start_new_games)) {
-    const downloads = await API.req(`/api/lists/${res.id}/downloads`);
-    const pending = (downloads || []).filter(d => ['pending', 'failed'].includes(d.status));
-    if (pending.length) {
-      const ok = await API.req('/api/downloads/batch/start', 'POST', { ids: pending.map(d => d.id) });
+    const ids = Array.isArray(res.download_ids) ? res.download_ids.map(Number).filter(Boolean) : [];
+    if (ids.length) {
+      const ok = await API.req('/api/downloads/batch/start', 'POST', { ids });
       if (ok) toast(`Queued ${Number(ok.queued || 0)} file(s)`, 'ok');
     }
   }
@@ -380,6 +389,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     const card = e.target.closest('.browse-card');
     if (!card) return;
+    openBrowseCard(card);
+  });
+
+  root.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    if (e.target.closest('button, a')) return;
+    const card = e.target.closest('.browse-card');
+    if (!card) return;
+    e.preventDefault();
     openBrowseCard(card);
   });
 

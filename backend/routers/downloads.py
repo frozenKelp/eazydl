@@ -2,7 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from database import Download, get_db
-from download_service import cancel_starting_download, is_starting_download, queue_download_start
+from download_service import (
+    cancel_starting_download,
+    is_starting_download,
+    needs_fresh_start,
+    queue_download_start,
+)
 from downloader import dm
 from schemas import DownloadBatch
 from security import clean_download_path
@@ -85,23 +90,35 @@ async def api_batch_resume(data: DownloadBatch, db: Session = Depends(get_db)):
                 dl.status = "downloading"
                 resumed_ids.append(dl.id)
             except Exception as e:
-                if "invalid" in str(e).lower() or "range" in str(e).lower():
+                if needs_fresh_start(str(e)):
                     await dm.stop(dl.id)
-                    dl.status = "pending"
+                    dl.status = "failed"
                     dl.bytes_downloaded = 0
                     dl.error_message = "Resuming failed due to corrupted range data. Reset to pending."
-                    reset_ids.append(dl.id)
+                    status = await queue_download_start(dl, db, base_path, allow_paused=True)
+                    if status == "queued":
+                        queued_ids.append(dl.id)
+                        reset_ids.append(dl.id)
+                    else:
+                        skipped_ids.append(dl.id)
                 else:
                     skipped_ids.append(dl.id)
             continue
 
         # Also reset failed downloads that have range errors
-        if effective_status == "error" or (effective_status == "failed" and dl.error_message and "range" in dl.error_message.lower()):
+        if effective_status in {"error", "failed"} and needs_fresh_start(
+            (live or {}).get("error") or dl.error_message
+        ):
             await dm.stop(dl.id)
-            dl.status = "pending"
+            dl.status = "failed"
             dl.bytes_downloaded = 0
             dl.error_message = "Reset to pending due to corrupted range data."
-            reset_ids.append(dl.id)
+            status = await queue_download_start(dl, db, base_path, allow_paused=True)
+            if status == "queued":
+                queued_ids.append(dl.id)
+                reset_ids.append(dl.id)
+            else:
+                skipped_ids.append(dl.id)
             continue
 
         # Queue startable downloads
@@ -137,17 +154,34 @@ async def api_batch_pause(data: DownloadBatch, db: Session = Depends(get_db)):
     ids = list(dict.fromkeys(int(i) for i in data.ids if i))
     rows = db.query(Download).filter(Download.id.in_(ids)).all() if ids else []
     paused = 0
+    paused_ids = []
+    skipped_ids = [dl_id for dl_id in ids if dl_id not in {dl.id for dl in rows}]
     for dl in rows:
         live = dm.get_progress(dl.id)
         effective_status = (live.get("status") if live else None) or dl.status
-        if effective_status not in {"downloading", "queued"} and not await is_starting_download(dl.id):
+        was_starting = await is_starting_download(dl.id)
+        if effective_status not in {"downloading", "queued"} and not was_starting:
+            skipped_ids.append(dl.id)
             continue
         await cancel_starting_download(dl.id)
-        await dm.pause(dl.id)
+        try:
+            paused_in_aria = await dm.pause(dl.id)
+        except Exception:
+            skipped_ids.append(dl.id)
+            continue
+        if not paused_in_aria and not was_starting:
+            skipped_ids.append(dl.id)
+            continue
         dl.status = "paused"
         paused += 1
+        paused_ids.append(dl.id)
     db.commit()
-    return {"paused": paused, "requested": len(ids)}
+    return {
+        "paused": paused,
+        "requested": len(ids),
+        "paused_ids": paused_ids,
+        "skipped_ids": skipped_ids,
+    }
 
 
 @router.post("/downloads/{dl_id}/start")
@@ -175,10 +209,13 @@ async def api_pause(dl_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "Download not found.")
     live = dm.get_progress(dl_id)
     effective_status = (live.get("status") if live else None) or dl.status
-    if effective_status not in {"downloading", "queued"} and not await is_starting_download(dl_id):
+    was_starting = await is_starting_download(dl_id)
+    if effective_status not in {"downloading", "queued"} and not was_starting:
         raise HTTPException(400, "Download is not running.")
     await cancel_starting_download(dl_id)
-    await dm.pause(dl_id)
+    paused_in_aria = await dm.pause(dl_id)
+    if not paused_in_aria and not was_starting:
+        raise HTTPException(409, "Download is no longer tracked by aria2c.")
     dl.status = "paused"
     db.commit()
     return {"status": "paused"}
@@ -191,6 +228,7 @@ async def api_resume(dl_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "Download not found.")
     live = dm.get_progress(dl_id)
     effective_status = (live.get("status") if live else None) or dl.status
+    base_path = clean_download_path(settings_snapshot(db).get("download_path", "downloads"))
 
     # Try to resume if paused
     if effective_status == "paused":
@@ -200,26 +238,33 @@ async def api_resume(dl_id: int, db: Session = Depends(get_db)):
             db.commit()
             return {"status": "resumed"}
         except Exception as e:
-            if "invalid" in str(e).lower() or "range" in str(e).lower():
+            if needs_fresh_start(str(e)):
                 await dm.stop(dl_id)
-                dl.status = "pending"
+                dl.status = "failed"
                 dl.bytes_downloaded = 0
                 dl.error_message = "Resuming failed due to corrupted range data. Reset to pending."
+                status = await queue_download_start(dl, db, base_path, allow_paused=True)
+                if status == "queued":
+                    return {"status": "queued", "reset": True}
                 db.commit()
                 return {"status": "reset", "error": str(e)}
             raise
 
     # Reset if failed due to range error
-    if effective_status == "error" or (effective_status == "failed" and dl.error_message and "range" in dl.error_message.lower()):
+    if effective_status in {"error", "failed"} and needs_fresh_start(
+        (live or {}).get("error") or dl.error_message
+    ):
         await dm.stop(dl_id)
-        dl.status = "pending"
+        dl.status = "failed"
         dl.bytes_downloaded = 0
         dl.error_message = "Reset to pending due to corrupted range data."
+        status = await queue_download_start(dl, db, base_path, allow_paused=True)
+        if status == "queued":
+            return {"status": "queued", "reset": True}
         db.commit()
         return {"status": "reset"}
 
     # Otherwise try to start the download
-    base_path = clean_download_path(settings_snapshot(db).get("download_path", "downloads"))
     status = await queue_download_start(dl, db, base_path, allow_paused=True)
     if status == "queued":
         return {"status": "queued"}

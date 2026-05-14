@@ -19,6 +19,15 @@ _starting_downloads: set[int] = set()
 _cancelled_starts: set[int] = set()
 _starting_lock = asyncio.Lock()
 _resolve_semaphore = asyncio.Semaphore(START_RESOLVE_CONCURRENCY)
+RECOVERABLE_PARTIAL_ERRORS = (
+    "invalid range header",
+    "no uri available",
+)
+
+
+def needs_fresh_start(message: str | None) -> bool:
+    text = (message or "").lower()
+    return any(marker in text for marker in RECOVERABLE_PARTIAL_ERRORS)
 
 
 async def release_starting_download(dl_id: int) -> None:
@@ -61,7 +70,12 @@ async def mark_download_failed(dl_id: int, message: str) -> None:
     await asyncio.to_thread(write)
 
 
-async def resolve_and_start(dl_id: int, base_path: str, list_name: str) -> None:
+async def resolve_and_start(
+    dl_id: int,
+    base_path: str,
+    list_name: str,
+    fresh_start: bool = False,
+) -> None:
     actual_url: str | None = None
     output_path: str | None = None
     last_db_write = 0.0
@@ -75,9 +89,14 @@ async def resolve_and_start(dl_id: int, base_path: str, list_name: str) -> None:
                     return
 
                 try:
-                    source_url = clean_url(dl.source_url, FUCKINGFAST_HOSTS, "download link")
+                    source_url = await asyncio.to_thread(
+                        clean_url,
+                        dl.source_url,
+                        FUCKINGFAST_HOSTS,
+                        "download link",
+                    )
                     resolved = await asyncio.to_thread(resolve_fuckingfast_download_info, source_url)
-                    if not is_public_http_url(resolved.url):
+                    if not await asyncio.to_thread(is_public_http_url, resolved.url):
                         raise ValueError("Resolved download URL is not public HTTP(S).")
                 except Exception as exc:
                     if not await start_was_cancelled(dl_id):
@@ -153,7 +172,7 @@ async def resolve_and_start(dl_id: int, base_path: str, list_name: str) -> None:
         try:
             if await start_was_cancelled(dl_id):
                 return
-            await dm.enqueue(dl_id, actual_url, output_path, on_update)
+            await dm.enqueue(dl_id, actual_url, output_path, on_update, fresh_start=fresh_start)
         except Exception as exc:
             await mark_download_failed(dl_id, str(exc))
     except Exception as exc:
@@ -178,6 +197,9 @@ async def queue_download_start(
         effective_status = (live.get("status") if live else None) or dl.status
         if is_starting or (live and effective_status in {"downloading", "queued"}):
             return "already_running"
+        if live and effective_status in {"failed", "pending"}:
+            await dm.stop(dl.id)
+            live = None
         if effective_status in {"downloading", "queued"}:
             # Recover stale DB state left behind by a cancelled resolver task or
             # server interruption. Without a live aria2 job or resolver task, a
@@ -189,12 +211,17 @@ async def queue_download_start(
             return "paused"
         if effective_status not in {"pending", "failed", "paused"}:
             return "skipped"
+        fresh_start = effective_status == "failed" or needs_fresh_start(
+            (live or {}).get("error") or dl.error_message
+        )
         dl.status = "queued"
         dl.error_message = None
+        if fresh_start:
+            dl.bytes_downloaded = 0
         db.commit()
         _cancelled_starts.discard(dl.id)
         _starting_downloads.add(dl.id)
 
     list_name = dl.link_list.name if dl.link_list else "default"
-    asyncio.create_task(resolve_and_start(dl.id, base_path, list_name))
+    asyncio.create_task(resolve_and_start(dl.id, base_path, list_name, fresh_start=fresh_start))
     return "queued"

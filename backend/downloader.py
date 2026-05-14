@@ -90,6 +90,7 @@ class Aria2Manager:
             self.api = test_api
             self._owns_process = False
             self.is_running = True
+            await self.set_max_concurrent(max_concurrent)
             self._poll_task = asyncio.create_task(self._poll_loop())
             logger.info("Reused existing aria2c daemon on port 6800.")
             return
@@ -185,7 +186,7 @@ class Aria2Manager:
             if not self.api:
                 continue
             if self._process and self._process.poll() is not None:
-                self._mark_unavailable("aria2c subprocess exited")
+                await self._mark_unavailable("aria2c subprocess exited")
                 return
             try:
                 await self._sync_all()
@@ -200,10 +201,10 @@ class Aria2Manager:
                     exc,
                 )
                 if self._poll_failures >= 3:
-                    self._mark_unavailable("aria2c RPC stopped responding")
+                    await self._mark_unavailable("aria2c RPC stopped responding")
                     return
 
-    def _mark_unavailable(self, reason: str) -> None:
+    async def _mark_unavailable(self, reason: str) -> None:
         logger.warning("%s; marking aria2c offline.", reason)
         self.is_running = False
         self.api = None
@@ -220,9 +221,15 @@ class Aria2Manager:
                 snap["status"] = "failed"
                 snap["speed"] = 0
                 snap["error"] = reason
+                if cb := self._callbacks.get(snap.get("id")):
+                    try:
+                        await cb(dict(snap))
+                    except Exception as exc:
+                        logger.debug("unavailable callback error for dl_id=%s: %s", snap.get("id"), exc)
 
     async def _sync_all(self) -> None:
         all_dls = await asyncio.to_thread(self.api.get_downloads)
+        seen_gids = {dl.gid for dl in all_dls}
 
         for dl in all_dls:
             dl_id = self._rev_map.get(dl.gid)
@@ -278,6 +285,27 @@ class Aria2Manager:
                 if monotonic() - seen_at >= self.terminal_cache_seconds:
                     self._clean(dl_id, dl.gid)
 
+        for dl_id, gid in list(self._gid_map.items()):
+            if gid not in seen_gids:
+                snap = {
+                    "id": dl_id,
+                    "gid": gid,
+                    "filename": self._cache.get(dl_id, {}).get("filename", ""),
+                    "status": "failed",
+                    "bytes_downloaded": self._cache.get(dl_id, {}).get("bytes_downloaded", 0),
+                    "total_bytes": self._cache.get(dl_id, {}).get("total_bytes", 0),
+                    "progress": self._cache.get(dl_id, {}).get("progress", 0),
+                    "speed": 0,
+                    "connections": 0,
+                    "error": "aria2c no longer tracks this download",
+                }
+                if cb := self._callbacks.get(dl_id):
+                    try:
+                        await cb(snap)
+                    except Exception as exc:
+                        logger.debug("missing-gid callback error for dl_id=%s: %s", dl_id, exc)
+                self._clean(dl_id, gid)
+
     # ── Enqueue ────────────────────────────────────────────────────────────────
 
     async def enqueue(
@@ -286,6 +314,7 @@ class Aria2Manager:
         url: str,
         output_path: str,
         on_update: Optional[Callable] = None,
+        fresh_start: bool = False,
     ) -> str:
         """
         Add a URL to aria2c's queue. Returns the aria2 GID immediately.
@@ -299,14 +328,21 @@ class Aria2Manager:
         out_dir = os.path.dirname(output_path) or "."
         os.makedirs(out_dir, exist_ok=True)
 
+        if fresh_start:
+            await asyncio.to_thread(self._discard_partial_files, output_path)
+
+        # FuckingFast's file backend does not reliably honor bounded range
+        # requests such as bytes=100-200; it often returns bytes=100-EOF.
+        # aria2's segmented mode treats that as a corrupt response, so use one
+        # connection per file for stable downloads.
+        connections = 1
         options = {
             "dir":                       out_dir,
             "out":                       os.path.basename(output_path),
-            "continue":                  "true",
-            # Multi-connection: aria2c opens N TCP connections to the same URL
-            "split":                     str(self.connections_per_file),
+            "continue":                  "false" if fresh_start else "true",
+            "split":                     str(connections),
             "min-split-size":            "1M",
-            "max-connection-per-server": str(self.connections_per_file),
+            "max-connection-per-server": str(connections),
         }
 
         dl = await asyncio.to_thread(self.api.add_uris, [url], options=options)
@@ -334,25 +370,36 @@ class Aria2Manager:
         }
         return gid
 
+    @staticmethod
+    def _discard_partial_files(output_path: str) -> None:
+        for path in (output_path, f"{output_path}.aria2"):
+            try:
+                if os.path.isfile(path):
+                    os.remove(path)
+            except OSError as exc:
+                logger.warning("Could not remove partial download file %s: %s", path, exc)
+
     # ── Controls ───────────────────────────────────────────────────────────────
     # BUG FIX: all three were synchronous and called blocking aria2p network I/O.
     # When invoked from async FastAPI endpoints they would have frozen the event
     # loop. Converted to async with asyncio.to_thread for every RPC call.
 
-    async def pause(self, dl_id: int) -> None:
+    async def pause(self, dl_id: int) -> bool:
         if not self.api:
-            return
+            raise RuntimeError("aria2c is not running")
         gid = self._gid_map.get(dl_id)
         if not gid:
-            return
+            return False
         try:
             dl_obj = await asyncio.to_thread(self.api.get_download, gid)
             await asyncio.to_thread(self.api.pause, [dl_obj])
             if dl_id in self._cache:
                 self._cache[dl_id]["status"] = "paused"
                 self._cache[dl_id]["speed"] = 0
+            return True
         except Exception as exc:
             logger.warning("pause(%s) failed: %s", dl_id, exc)
+            raise
 
     async def resume(self, dl_id: int) -> None:
         if not self.api:

@@ -31,9 +31,10 @@ def download_to_dict(d: Download) -> dict:
 
 def list_to_dict(lst: LinkList, include_downloads: bool = False) -> dict:
     dls = lst.downloads
-    total_bytes = sum(d.total_bytes or 0 for d in dls)
-    dl_bytes = sum(d.bytes_downloaded or 0 for d in dls)
-    completed = sum(1 for d in dls if d.status == "completed")
+    downloads = [download_to_dict(d) for d in dls]
+    total_bytes = sum(d["total_bytes"] or 0 for d in downloads)
+    dl_bytes = sum(d["bytes_downloaded"] or 0 for d in downloads)
+    completed = sum(1 for d in downloads if d["status"] == "completed")
     data = {
         "id": lst.id,
         "name": lst.name,
@@ -50,5 +51,5 @@ def list_to_dict(lst: LinkList, include_downloads: bool = False) -> dict:
         "bytes_downloaded": dl_bytes,
     }
     if include_downloads:
-        data["downloads"] = [download_to_dict(d) for d in dls]
+        data["downloads"] = downloads
     return data

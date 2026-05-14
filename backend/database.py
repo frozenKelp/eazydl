@@ -148,6 +148,23 @@ def _migrate_download_unique_index() -> None:
     """Prevent duplicate source links per game at the SQLite level."""
     try:
         with engine.begin() as conn:
+            duplicate_count = conn.execute(text(
+                "SELECT COUNT(*) FROM downloads "
+                "WHERE id NOT IN ("
+                "  SELECT MIN(id) FROM downloads GROUP BY list_id, source_url"
+                ")"
+            )).scalar() or 0
+            if duplicate_count:
+                logger.warning(
+                    "Removing %s duplicate download link row(s) before creating unique index.",
+                    duplicate_count,
+                )
+                conn.execute(text(
+                    "DELETE FROM downloads "
+                    "WHERE id NOT IN ("
+                    "  SELECT MIN(id) FROM downloads GROUP BY list_id, source_url"
+                    ")"
+                ))
             conn.execute(text(
                 "CREATE UNIQUE INDEX IF NOT EXISTS "
                 "ux_downloads_list_source ON downloads (list_id, source_url)"

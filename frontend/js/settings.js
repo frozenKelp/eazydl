@@ -1,7 +1,11 @@
 async function loadSettings() {
   const settings = await getSettings();
   applyInterfaceSettings(settings);
+  applySettingsToForm(settings);
+  await loadRuntime();
+}
 
+function applySettingsToForm(settings) {
   document.querySelectorAll('[name]').forEach(field => {
     const value = settings[field.name];
     if (field.type === 'checkbox') {
@@ -12,7 +16,6 @@ async function loadSettings() {
   });
 
   syncScaleLabel();
-  await loadRuntime();
 }
 
 async function loadRuntime() {
@@ -79,8 +82,15 @@ function previewScale() {
   document.documentElement.style.fontSize = `${14 * (value / 100)}px`;
 }
 
+function resetSettingsForm() {
+  applySettingsToForm(SETTINGS_DEFAULTS);
+  applyInterfaceSettings(SETTINGS_DEFAULTS);
+  toast('Defaults staged. Save to apply them.', 'info');
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('settings-form').addEventListener('submit', saveSettings);
+  document.getElementById('reset-settings-btn').addEventListener('click', resetSettingsForm);
   document.querySelectorAll('[data-settings-tab]').forEach(btn => {
     btn.addEventListener('click', () => showPanel(btn.dataset.settingsTab));
   });

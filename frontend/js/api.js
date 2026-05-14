@@ -5,10 +5,15 @@ const SETTINGS_DEFAULTS = {
   library_default_detail: 'false',
   library_show_file_urls: 'true',
   confirm_delete: 'true',
+  auto_start_new_games: 'false',
   interface_scale: '100',
   theme_density: 'comfortable',
   reduce_motion: 'false',
 };
+
+let cachedSettingsPromise = null;
+let navEls = { dot: null, label: null, speed: null };
+window.aria2Online = true;
 
 const API = {
   _ws: null,
@@ -77,9 +82,8 @@ function readableMessage(value) {
 }
 
 function updateNavStatus(aria2ok, downloads) {
-  const dot = document.getElementById('nav-dot');
-  const label = document.getElementById('nav-label');
-  const speed = document.getElementById('nav-speed');
+  window.aria2Online = Boolean(aria2ok);
+  const { dot, label, speed } = navEls;
 
   if (dot) dot.className = `status-dot ${aria2ok ? 'ok' : 'err'}`;
   const total = downloads.reduce((s, d) => s + (d.speed || 0), 0);
@@ -132,7 +136,8 @@ function boolSetting(value, fallback = false) {
 }
 
 async function getSettings() {
-  const settings = await API.req('/api/settings');
+  if (!cachedSettingsPromise) cachedSettingsPromise = API.req('/api/settings');
+  const settings = await cachedSettingsPromise;
   return { ...SETTINGS_DEFAULTS, ...(settings || {}) };
 }
 
@@ -144,6 +149,12 @@ function applyInterfaceSettings(settings) {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+  navEls = {
+    dot: document.getElementById('nav-dot'),
+    label: document.getElementById('nav-label'),
+    speed: document.getElementById('nav-speed'),
+  };
+
   const path = location.pathname;
   document.querySelectorAll('.nav-link').forEach(a => {
     const href = a.getAttribute('href');

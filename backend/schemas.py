@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ListCreate(BaseModel):
@@ -8,7 +8,7 @@ class ListCreate(BaseModel):
 
 
 class LinksAdd(BaseModel):
-    urls: List[str]
+    urls: List[str] = Field(default_factory=list, max_length=200)
 
 
 class ScrapeRequest(BaseModel):
@@ -26,4 +26,4 @@ class GameAdd(BaseModel):
 
 
 class DownloadBatch(BaseModel):
-    ids: List[int]
+    ids: List[int] = Field(default_factory=list, max_length=500)
