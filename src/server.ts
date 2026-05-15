@@ -4,11 +4,11 @@ import Fastify from 'fastify';
 import fs from 'fs';
 import path from 'path';
 import { FRONTEND_DIR } from './config.js';
-import { initDb } from './db/database.js';
 import { aria2 } from './aria2-service.js';
 import { registerApiRoutes } from './api.js';
 import { HttpError } from './security.js';
 import { loadSettingsCache, settingsSnapshot } from './settings.js';
+import { closeScraperBrowser } from './scraper.js';
 
 export async function buildApp() {
   const app = Fastify({ logger: { level: 'warn' } });
@@ -89,7 +89,6 @@ function sendFrontend(app: any, parts: string[], reply: any, cacheSeconds = 0) {
 }
 
 export async function startServer(host: string, port: number): Promise<void> {
-  initDb();
   loadSettingsCache();
   const snapshot = settingsSnapshot();
 
@@ -98,9 +97,11 @@ export async function startServer(host: string, port: number): Promise<void> {
 
   try {
     await aria2.start(maxConcurrent, connectionsPerFile);
+    await aria2.restoreTrackedDownloads();
     console.log('aria2c connected and ready.');
   } catch (err) {
     console.warn('aria2c unavailable:', err instanceof Error ? err.message : err);
+    aria2.markInFlightUnavailable('aria2c is unavailable after server start.');
   }
 
   const app = await buildApp();
@@ -108,6 +109,7 @@ export async function startServer(host: string, port: number): Promise<void> {
   console.log(`EasyDL running at http://${host}:${port}`);
 
   const shutdown = async () => {
+    await closeScraperBrowser();
     await aria2.shutdown();
     await app.close();
     process.exit(0);

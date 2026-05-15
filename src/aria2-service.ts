@@ -3,7 +3,7 @@ import { execFile as execFileCallback } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { promisify } from 'util';
-import { db, queries, type DownloadRow } from './db/database.js';
+import { db, markUntrackedInFlightDownloads, queries, type DownloadRow } from './db/database.js';
 import { cleanFilename, resolveFuckingFastDownloadInfo } from './scraper.js';
 import { cleanUrl, HttpError, isPublicHttpUrl } from './security.js';
 import { FUCKINGFAST_HOSTS, PROGRESS_DB_WRITE_INTERVAL_MS, START_RESOLVE_CONCURRENCY } from './config.js';
@@ -12,6 +12,18 @@ const execFile = promisify(execFileCallback);
 const RPC_URL = 'http://localhost:6800/jsonrpc';
 
 type ProgressCallback = (snap: ProgressSnapshot) => Promise<void>;
+
+type AriaDownload = {
+  gid: string;
+  status: string;
+  completedLength: string;
+  totalLength: string;
+  downloadSpeed: string;
+  connections?: string;
+  errorMessage?: string;
+  errorCode?: string;
+  files?: Array<{ path: string }>;
+};
 
 export interface ProgressSnapshot {
   id: number;
@@ -38,6 +50,18 @@ const STATUS_MAP: Record<string, string> = {
 const RECOVERABLE_PARTIAL_ERRORS = [
   'invalid range header',
   'no uri available',
+];
+
+const ARIA_PROGRESS_KEYS = [
+  'gid',
+  'status',
+  'completedLength',
+  'totalLength',
+  'downloadSpeed',
+  'connections',
+  'errorMessage',
+  'errorCode',
+  'files',
 ];
 
 let rpcIdCounter = 1;
@@ -81,6 +105,8 @@ export class Aria2Service {
   private ownsProcess = false;
   private gidMap = new Map<number, string>();
   private revMap = new Map<string, number>();
+  private outputPathMap = new Map<number, string>();
+  private claimedOutputPaths = new Set<string>();
   private callbacks = new Map<number, ProgressCallback>();
   private cache = new Map<number, ProgressSnapshot>();
   private terminalSince = new Map<number, number>();
@@ -123,8 +149,8 @@ export class Aria2Service {
       '--rpc-allow-origin-all=true',
       `--max-concurrent-downloads=${maxConcurrent}`,
       '--continue=true',
-      '--auto-file-renaming=false',
-      '--allow-overwrite=true',
+      '--auto-file-renaming=true',
+      '--allow-overwrite=false',
       '--quiet=true',
     ], { stdio: 'ignore', windowsHide: true });
     this.ownsProcess = true;
@@ -165,6 +191,58 @@ export class Aria2Service {
     this.process?.kill();
     this.process = null;
     this.ownsProcess = false;
+  }
+
+  markInFlightUnavailable(message: string): void {
+    markUntrackedInFlightDownloads(message);
+    for (const row of queries.getAllDownloads.all()) {
+      if (['downloading', 'queued'].includes(row.status)) {
+        this.setTransientStatus(row.id, 'failed', message);
+      }
+    }
+  }
+
+  async restoreTrackedDownloads(): Promise<void> {
+    if (!this.isRunning) return;
+
+    const rows = queries.getDownloadsWithGid.all()
+      .filter(row => ['downloading', 'queued', 'paused'].includes(row.status));
+    if (!rows.length) return;
+
+    const ariaRows = await this.loadAriaDownloads();
+    const byGid = new Map(ariaRows.map(row => [row.gid, row]));
+    const clearMissing = db.prepare<unknown, [string | null, number]>(
+      `UPDATE downloads SET status=CASE WHEN status IN ('downloading', 'queued') THEN 'pending' ELSE status END,
+                            gid=NULL,
+                            error_message=COALESCE(?, error_message)
+       WHERE id=?`,
+    );
+
+    let restored = 0;
+    for (const row of rows) {
+      if (!row.gid) continue;
+      const ariaRow = byGid.get(row.gid);
+      if (!ariaRow) {
+        const message = ['downloading', 'queued'].includes(row.status)
+          ? 'aria2c no longer tracks this download after restart.'
+          : null;
+        clearMissing.run(message, row.id);
+        continue;
+      }
+
+      this.gidMap.set(row.id, row.gid);
+      this.revMap.set(row.gid, row.id);
+      this.callbacks.set(row.id, this.dbProgressCallback(row.id));
+      if (ariaRow.files?.[0]?.path) {
+        const outputPath = path.resolve(ariaRow.files[0].path);
+        this.outputPathMap.set(row.id, outputPath);
+        this.claimedOutputPaths.add(outputPath);
+      }
+      this.cache.set(row.id, this.snapshotFromAria(ariaRow, row.id));
+      restored++;
+    }
+
+    if (restored) await this.syncAll();
   }
 
   private startPollTimer(): void {
@@ -224,53 +302,50 @@ export class Aria2Service {
     }
   }
 
-  private async syncAll(): Promise<void> {
-    type AriaDownload = {
-      gid: string;
-      status: string;
-      completedLength: string;
-      totalLength: string;
-      downloadSpeed: string;
-      connections?: string;
-      errorMessage?: string;
-      errorCode?: string;
-      files?: Array<{ path: string }>;
+  private async loadAriaDownloads(): Promise<AriaDownload[]> {
+    const active = await rpc('aria2.tellActive', [ARIA_PROGRESS_KEYS]) as AriaDownload[];
+    const waiting = await rpc('aria2.tellWaiting', [0, 1000, ARIA_PROGRESS_KEYS]) as AriaDownload[];
+    const stopped = await rpc('aria2.tellStopped', [0, 1000, ARIA_PROGRESS_KEYS]) as AriaDownload[];
+    return [...active, ...waiting, ...stopped];
+  }
+
+  private snapshotFromAria(dl: AriaDownload, dlId: number): ProgressSnapshot {
+    const status = STATUS_MAP[dl.status] ?? dl.status;
+    const error = dl.errorMessage
+      ? dl.errorMessage
+      : dl.errorCode
+        ? `Error code ${dl.errorCode}`
+        : status === 'failed'
+          ? 'Download failed'
+          : null;
+    const cachedFilename = this.cache.get(dlId)?.filename ?? '';
+    const ariaFilename = dl.files?.[0]?.path ? path.basename(dl.files[0].path) : '';
+    const bytesDownloaded = parseAriaInt(dl.completedLength);
+    const totalBytes = parseAriaInt(dl.totalLength);
+    return {
+      id: dlId,
+      gid: dl.gid,
+      filename: cachedFilename || ariaFilename,
+      status,
+      bytes_downloaded: bytesDownloaded,
+      total_bytes: totalBytes,
+      progress: totalBytes > 0 ? Math.round((bytesDownloaded / totalBytes) * 10000) / 100 : 0,
+      speed: parseAriaInt(dl.downloadSpeed),
+      connections: parseAriaInt(dl.connections),
+      error,
     };
-    const keys = ['gid', 'status', 'completedLength', 'totalLength', 'downloadSpeed', 'connections', 'errorMessage', 'errorCode', 'files'];
-    const active = await rpc('aria2.tellActive', [keys]) as AriaDownload[];
-    const waiting = await rpc('aria2.tellWaiting', [0, 1000, keys]) as AriaDownload[];
-    const stopped = await rpc('aria2.tellStopped', [0, 1000, keys]) as AriaDownload[];
-    const all = [...active, ...waiting, ...stopped];
+  }
+
+  private async syncAll(): Promise<void> {
+    const all = await this.loadAriaDownloads();
     const seenGids = new Set(all.map(dl => dl.gid));
 
     for (const dl of all) {
       const dlId = this.revMap.get(dl.gid);
       if (dlId === undefined) continue;
 
-      const status = STATUS_MAP[dl.status] ?? dl.status;
-      const error = dl.errorMessage
-        ? dl.errorMessage
-        : dl.errorCode
-          ? `Error code ${dl.errorCode}`
-          : status === 'failed'
-            ? 'Download failed'
-            : null;
-      const cachedFilename = this.cache.get(dlId)?.filename ?? '';
-      const ariaFilename = dl.files?.[0]?.path ? path.basename(dl.files[0].path) : '';
-      const bytesDownloaded = parseAriaInt(dl.completedLength);
-      const totalBytes = parseAriaInt(dl.totalLength);
-      const snap: ProgressSnapshot = {
-        id: dlId,
-        gid: dl.gid,
-        filename: cachedFilename || ariaFilename,
-        status,
-        bytes_downloaded: bytesDownloaded,
-        total_bytes: totalBytes,
-        progress: totalBytes > 0 ? Math.round((bytesDownloaded / totalBytes) * 10000) / 100 : 0,
-        speed: parseAriaInt(dl.downloadSpeed),
-        connections: parseAriaInt(dl.connections),
-        error,
-      };
+      const snap = this.snapshotFromAria(dl, dlId);
+      const status = snap.status;
       this.cache.set(dlId, snap);
 
       const isTerminal = ['completed', 'failed', 'pending'].includes(status);
@@ -340,7 +415,7 @@ export class Aria2Service {
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
     if (freshStart) this.discardPartialFiles(outputPath);
 
-    const connections = 1;
+    const connections = Math.max(1, Math.min(16, this.connectionsPerFile));
     const gid = await rpc('aria2.addUri', [
       [url],
       {
@@ -355,9 +430,15 @@ export class Aria2Service {
 
     this.gidMap.set(dlId, gid);
     this.revMap.set(gid, dlId);
+    this.outputPathMap.set(dlId, outputPath);
+    this.claimedOutputPaths.add(path.resolve(outputPath));
     this.terminalSince.delete(dlId);
     this.terminalNotified.delete(dlId);
     if (onUpdate) this.callbacks.set(dlId, onUpdate);
+
+    db.prepare<unknown, [string, number]>(
+      `UPDATE downloads SET gid=? WHERE id=?`,
+    ).run(gid, dlId);
 
     this.cache.set(dlId, {
       id: dlId,
@@ -384,6 +465,27 @@ export class Aria2Service {
     }
   }
 
+  private uniqueOutputPath(outputPath: string): string {
+    const resolved = path.resolve(outputPath);
+    const dir = path.dirname(resolved);
+    const ext = path.extname(resolved);
+    const stem = path.basename(resolved, ext);
+
+    for (let n = 0; n < 10000; n++) {
+      const candidate = n === 0
+        ? resolved
+        : path.join(dir, `${stem} (${n + 1})${ext}`);
+      if (this.claimedOutputPaths.has(candidate)) continue;
+      if (fs.existsSync(candidate) || fs.existsSync(`${candidate}.aria2`)) continue;
+      this.claimedOutputPaths.add(candidate);
+      return candidate;
+    }
+
+    const fallback = path.join(dir, `${stem}-${Date.now()}${ext}`);
+    this.claimedOutputPaths.add(fallback);
+    return fallback;
+  }
+
   async pause(dlId: number): Promise<boolean> {
     if (!this.isRunning) throw new Error('aria2c is not running');
     const gid = this.gidMap.get(dlId);
@@ -402,13 +504,14 @@ export class Aria2Service {
     }
   }
 
-  async resume(dlId: number): Promise<void> {
-    if (!this.isRunning) return;
+  async resume(dlId: number): Promise<boolean> {
+    if (!this.isRunning) throw new Error('aria2c is not running');
     const gid = this.gidMap.get(dlId);
-    if (!gid) return;
+    if (!gid) return false;
     await rpc('aria2.unpause', [gid]);
     const snap = this.cache.get(dlId);
     if (snap) snap.status = 'downloading';
+    return true;
   }
 
   async stop(dlId: number): Promise<void> {
@@ -424,8 +527,11 @@ export class Aria2Service {
   }
 
   private clean(dlId: number, gid: string | null): void {
+    const outputPath = this.outputPathMap.get(dlId);
+    if (outputPath) this.claimedOutputPaths.delete(path.resolve(outputPath));
     this.gidMap.delete(dlId);
     if (gid) this.revMap.delete(gid);
+    this.outputPathMap.delete(dlId);
     this.callbacks.delete(dlId);
     this.cache.delete(dlId);
     this.terminalSince.delete(dlId);
@@ -503,7 +609,74 @@ export class Aria2Service {
     if (next) next();
   }
 
+  private dbProgressCallback(
+    dlId: number,
+    getLastWrite = () => 0,
+    setLastWrite: (value: number) => void = () => undefined,
+  ): ProgressCallback {
+    return async (snap: ProgressSnapshot): Promise<void> => {
+      const now = Date.now();
+      const isTerminal = ['completed', 'failed', 'paused'].includes(snap.status);
+      if (!isTerminal && now - getLastWrite() < PROGRESS_DB_WRITE_INTERVAL_MS) return;
+      setLastWrite(now);
+
+      db.prepare<unknown, [string, number, number, string, string, string | null, string | null, string | null, number]>(`
+        UPDATE downloads
+        SET status=?,
+            bytes_downloaded=?,
+            total_bytes=?,
+            filename=COALESCE(NULLIF(?, ''), filename),
+            completed_at=CASE WHEN ? = 'completed' THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') ELSE completed_at END,
+            error_message=CASE WHEN ? IS NOT NULL THEN ? ELSE error_message END,
+            gid=CASE WHEN ? IN ('completed', 'failed', 'pending') THEN NULL ELSE gid END
+        WHERE id=?
+      `).run(
+        snap.status,
+        snap.bytes_downloaded,
+        snap.total_bytes,
+        cleanFilename(snap.filename) ?? '',
+        snap.status,
+        snap.error,
+        snap.error?.slice(0, 500) ?? null,
+        snap.status,
+        dlId,
+      );
+    };
+  }
+
+  private setTransientStatus(
+    dlId: number,
+    status: 'queued' | 'failed' | 'pending',
+    message: string | null = null,
+  ): void {
+    const old = this.cache.get(dlId);
+    this.cache.set(dlId, {
+      id: dlId,
+      gid: old?.gid ?? '',
+      filename: old?.filename ?? '',
+      status,
+      bytes_downloaded: old?.bytes_downloaded ?? 0,
+      total_bytes: old?.total_bytes ?? 0,
+      progress: old?.progress ?? 0,
+      speed: 0,
+      connections: 0,
+      error: message,
+    });
+    if (['failed', 'pending'].includes(status)) {
+      const timer = setTimeout(() => {
+        const snap = this.cache.get(dlId);
+        if (snap?.status === status && !snap.gid) this.cache.delete(dlId);
+      }, this.terminalCacheMs);
+      if (typeof timer === 'object' && 'unref' in timer && typeof timer.unref === 'function') {
+        timer.unref();
+      }
+    }
+  }
+
   releaseStartingDownload(dlId: number): void {
+    if (this.cancelledStarts.has(dlId) && !this.gidMap.has(dlId)) {
+      this.cache.delete(dlId);
+    }
     this.startingDownloads.delete(dlId);
     this.cancelledStarts.delete(dlId);
   }
@@ -551,6 +724,7 @@ export class Aria2Service {
     db.prepare<unknown, [number, number]>(`
       UPDATE downloads
       SET status='queued',
+          gid=NULL,
           error_message=NULL,
           bytes_downloaded=CASE WHEN ? THEN 0 ELSE bytes_downloaded END
       WHERE id=?
@@ -558,6 +732,18 @@ export class Aria2Service {
 
     this.cancelledStarts.delete(dl.id);
     this.startingDownloads.add(dl.id);
+    this.cache.set(dl.id, {
+      id: dl.id,
+      gid: '',
+      filename: cleanFilename(dl.filename) ?? '',
+      status: 'queued',
+      bytes_downloaded: freshStart ? 0 : dl.bytes_downloaded,
+      total_bytes: dl.total_bytes,
+      progress: dl.total_bytes > 0 ? Math.round(((freshStart ? 0 : dl.bytes_downloaded) / dl.total_bytes) * 10000) / 100 : 0,
+      speed: 0,
+      connections: 0,
+      error: null,
+    });
 
     const listRow = db.prepare<{ name: string }, [number]>(
       `SELECT name FROM link_lists WHERE id=?`,
@@ -599,19 +785,21 @@ export class Aria2Service {
             cleanFilename(resolved.filename) ??
             cleanFilename(actualUrl) ??
             `file_${dlId}`;
-          outputPath = path.join(basePath, this.safeListName(listName), filename);
+          outputPath = this.uniqueOutputPath(path.join(basePath, this.safeListName(listName), filename));
+          const outputFilename = path.basename(outputPath);
 
           const latest = queries.getDownloadById.get(dlId);
           if (!latest || latest.status !== 'queued' || this.startWasCancelled(dlId)) return;
           db.prepare<unknown, [string, string, number]>(
             `UPDATE downloads SET resolved_url=?, filename=? WHERE id=?`,
-          ).run(actualUrl, filename, dlId);
+          ).run(actualUrl, outputFilename, dlId);
         } catch (err) {
           if (!this.startWasCancelled(dlId)) {
             const msg = err instanceof Error ? err.message : String(err);
             db.prepare<unknown, [string, number]>(
               `UPDATE downloads SET status='failed', error_message=? WHERE id=?`,
             ).run(msg.slice(0, 500), dlId);
+            this.setTransientStatus(dlId, 'failed', msg.slice(0, 500));
           }
           return;
         }
@@ -620,33 +808,9 @@ export class Aria2Service {
       }
 
       if (!actualUrl || !outputPath) return;
-
-      const onUpdate = async (snap: ProgressSnapshot): Promise<void> => {
-        const now = Date.now();
-        const isTerminal = ['completed', 'failed', 'paused'].includes(snap.status);
-        if (!isTerminal && now - lastDbWrite < PROGRESS_DB_WRITE_INTERVAL_MS) return;
-        lastDbWrite = now;
-
-        db.prepare<unknown, [string, number, number, string, string, string | null, string | null, number]>(`
-          UPDATE downloads
-          SET status=?,
-              bytes_downloaded=?,
-              total_bytes=?,
-              filename=COALESCE(NULLIF(?, ''), filename),
-              completed_at=CASE WHEN ? = 'completed' THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') ELSE completed_at END,
-              error_message=CASE WHEN ? IS NOT NULL THEN ? ELSE error_message END
-          WHERE id=?
-        `).run(
-          snap.status,
-          snap.bytes_downloaded,
-          snap.total_bytes,
-          cleanFilename(snap.filename) ?? '',
-          snap.status,
-          snap.error,
-          snap.error?.slice(0, 500) ?? null,
-          dlId,
-        );
-      };
+      const onUpdate = this.dbProgressCallback(dlId, () => lastDbWrite, value => {
+        lastDbWrite = value;
+      });
 
       if (this.startWasCancelled(dlId)) return;
       await this.enqueue(dlId, actualUrl, outputPath, onUpdate, freshStart);
@@ -659,6 +823,9 @@ export class Aria2Service {
         ).run(msg.slice(0, 500), dlId);
       }
     } finally {
+      if (outputPath && !this.outputPathMap.has(dlId)) {
+        this.claimedOutputPaths.delete(path.resolve(outputPath));
+      }
       this.releaseStartingDownload(dlId);
     }
   }

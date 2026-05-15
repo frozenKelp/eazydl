@@ -14,7 +14,6 @@
   <easy-shell page="library" label="Library" meta="local collection">
     <template data-shell-actions>
       <button id="refresh-btn" class="btn btn-ghost" type="button">
-        <span class="icon icon-refresh" aria-hidden="true"></span>
         <span>Refresh</span>
       </button>
       <input id="library-filter" type="search" placeholder="Filter library" autocomplete="off" aria-label="Filter library">
@@ -41,20 +40,20 @@
             <div class="pane-meta">live</div>
           </div>
           <div class="pane-body utility-stack">
-            <section class="mini-section">
+            <section class="mini-section" id="library-runtime-panel">
               <div class="mini-title">Session</div>
               <div class="mini-list">
-                <div class="mini-row"><span>Backend</span><strong>FastAPI</strong></div>
-                <div class="mini-row"><span>Downloader</span><strong>aria2c</strong></div>
-                <div class="mini-row"><span>Mode</span><strong>local</strong></div>
+                <div class="mini-row"><span>Backend</span><strong>Fastify</strong></div>
+                <div class="mini-row"><span>Downloader</span><strong id="library-runtime-aria">checking</strong></div>
+                <div class="mini-row"><span>Speed</span><strong id="library-runtime-speed">0 B/s</strong></div>
               </div>
             </section>
-            <section class="mini-section">
-              <div class="mini-title">Flow</div>
+            <section class="mini-section" id="library-selection-panel">
+              <div class="mini-title">Selection</div>
               <div class="mini-list">
-                <div class="mini-row"><span>Browse</span><strong>add</strong></div>
-                <div class="mini-row"><span>Library</span><strong>start</strong></div>
-                <div class="mini-row"><span>Files</span><strong>pause</strong></div>
+                <div class="mini-row"><span>Visible games</span><strong id="library-visible-count">0</strong></div>
+                <div class="mini-row"><span>Selected</span><strong id="library-selected-name">none</strong></div>
+                <div class="mini-row"><span>Filter</span><strong id="library-filter-state">off</strong></div>
               </div>
             </section>
           </div>

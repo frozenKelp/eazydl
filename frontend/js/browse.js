@@ -6,21 +6,6 @@ let selectedBrowseCard = null;
 let currentQuery = '';
 let currentPage = 1;
 let browseRequestId = 0;
-let hydrationObserver = null;
-const detailCache = new Map();
-const hydrationPromises = new Map();
-const detailQueue = [];
-let activeHydrations = 0;
-const maxDetailHydrations = 4;
-const detailCacheLimit = 200;
-
-function rememberDetail(url, details) {
-  if (detailCache.has(url)) detailCache.delete(url);
-  detailCache.set(url, details);
-  while (detailCache.size > detailCacheLimit) {
-    detailCache.delete(detailCache.keys().next().value);
-  }
-}
 
 async function refreshKnownTitles() {
   const lists = await API.req('/api/lists');
@@ -28,12 +13,14 @@ async function refreshKnownTitles() {
     knownTitles = new Set(lists.map(l => l.name));
     knownListIds = new Map(lists.map(l => [l.name, l.id]));
     knownTitlesLoaded = true;
+    updateBrowseSidePanel();
   }
 }
 
 async function loadBrowseSettings() {
   browseSettings = await getSettings();
   applyInterfaceSettings(browseSettings);
+  updateBrowseSidePanel();
 }
 
 function browseLimit() {
@@ -56,7 +43,7 @@ async function loadBrowse(query = currentQuery, page = currentPage) {
     limit: String(browseLimit()),
     hydrate: 'false',
   });
-  const data = await API.req(`/api/scrape/search?${params.toString()}`);
+  const data = await API.req(`/api/scrape/search?${params.toString()}`, 'GET', null, { timeoutMs: 22000 });
   if (requestId !== browseRequestId) return;
   if (!data) {
     root.innerHTML = `
@@ -95,7 +82,18 @@ async function loadBrowse(query = currentQuery, page = currentPage) {
     ${renderPager(games.length >= browseLimit())}`;
   clearBrowseDetail();
   bindPager(games.length);
-  observeDetailHydration(root);
+  updateBrowseSidePanel(games.length);
+}
+
+function renderBrowseStart() {
+  const root = document.getElementById('browse-results');
+  clearBrowseDetail();
+  root.innerHTML = `
+    <div class="empty-state empty-state-tight">
+      <div class="empty-icon"><span class="icon icon-browse" aria-hidden="true"></span></div>
+      <h3>Search FitGirl</h3>
+      <p>Enter a title above, or use Popular when you want to fetch the yearly index.</p>
+    </div>`;
 }
 
 function renderPager(hasNext) {
@@ -137,8 +135,7 @@ function renderBrowseCard(game) {
       data-image-url="${esc(game.image || '')}"
       data-size="${esc(size)}"
       data-categories="${esc(cats.join('|'))}"
-      data-library-id="${esc(libraryId)}"
-      data-hydrated="${game.excerpt && game.size ? 'true' : 'false'}">
+      data-library-id="${esc(libraryId)}">
     <div class="browse-thumb-wrap">
       ${image
         ? `<img class="browse-thumb is-loading" src="${esc(image)}" alt="" loading="lazy" referrerpolicy="no-referrer" onload="this.classList.remove('is-loading')" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'browse-thumb-placeholder',textContent:'No image'}))">`
@@ -157,112 +154,6 @@ function renderBrowseCard(game) {
   </article>`;
 }
 
-function observeDetailHydration(root) {
-  if (hydrationObserver) hydrationObserver.disconnect();
-  const cards = [...root.querySelectorAll('.browse-card[data-hydrated="false"]')];
-  if (!cards.length) return;
-
-  if (!('IntersectionObserver' in window)) {
-    cards.slice(0, 8).forEach(scheduleHydration);
-    return;
-  }
-
-  hydrationObserver = new IntersectionObserver((entries) => {
-    entries.forEach((entry) => {
-      if (!entry.isIntersecting) return;
-      hydrationObserver.unobserve(entry.target);
-      scheduleHydration(entry.target);
-    });
-  }, { rootMargin: '360px 0px' });
-
-  cards.forEach(card => hydrationObserver.observe(card));
-}
-
-function scheduleHydration(card) {
-  if (!card || card.dataset.hydrated === 'true' || card.dataset.hydrationQueued === 'true') return;
-  card.dataset.hydrationQueued = 'true';
-  detailQueue.push(card);
-  pumpHydrationQueue();
-}
-
-function pumpHydrationQueue() {
-  while (activeHydrations < maxDetailHydrations && detailQueue.length) {
-    const card = detailQueue.shift();
-    if (!card || card.dataset.hydrated === 'true') continue;
-    activeHydrations += 1;
-    hydrateCard(card).finally(() => {
-      activeHydrations -= 1;
-      pumpHydrationQueue();
-    });
-  }
-}
-
-async function hydrateCard(card) {
-  if (!card || card.dataset.hydrated === 'true') return true;
-  const url = card.dataset.url;
-  if (!url) {
-    card.dataset.hydrationQueued = 'false';
-    return false;
-  }
-
-  if (detailCache.has(url)) {
-    applyCardDetails(card, detailCache.get(url));
-    return true;
-  }
-
-  if (hydrationPromises.has(url)) {
-    const details = await hydrationPromises.get(url);
-    if (details) applyCardDetails(card, details);
-    return Boolean(details);
-  }
-
-  const promise = API.req(`/api/scrape/details?url=${encodeURIComponent(url)}`)
-    .finally(() => hydrationPromises.delete(url));
-  hydrationPromises.set(url, promise);
-  const details = await promise;
-  if (!details) {
-    card.dataset.hydrationQueued = 'false';
-    return false;
-  }
-
-  rememberDetail(url, details);
-  applyCardDetails(card, details);
-  return true;
-}
-
-function applyCardDetails(card, details) {
-  const imageUrl = details.image || '';
-  const size = details.size ? String(details.size).replace(/^from\s+/i, '') : '';
-  const categories = Array.isArray(details.categories) ? details.categories.filter(Boolean) : [];
-
-  if (imageUrl && !card.dataset.imageUrl) {
-    const wrap = card.querySelector('.browse-thumb-wrap');
-    const existingChip = wrap.querySelector('.size-chip')?.outerHTML || '';
-    wrap.innerHTML = `<img class="browse-thumb is-loading" src="${esc(proxiedImage(imageUrl))}" alt="" loading="lazy" referrerpolicy="no-referrer" onload="this.classList.remove('is-loading')">${existingChip}`;
-    card.dataset.imageUrl = imageUrl;
-  }
-
-  if (size) {
-    let chip = card.querySelector('.size-chip');
-    if (!chip) {
-      chip = document.createElement('span');
-      chip.className = 'size-chip';
-      card.querySelector('.browse-thumb-wrap').appendChild(chip);
-    }
-    chip.textContent = size;
-    card.dataset.size = size;
-  }
-
-  const tags = card.querySelector('.card-tags');
-  if (tags && categories.length) {
-    tags.innerHTML = categories.slice(0, 3).map(c => `<span class="tag-chip">${esc(c)}</span>`).join('');
-    card.dataset.categories = categories.join('|');
-  }
-
-  card.dataset.hydrated = 'true';
-  if (selectedBrowseCard === card) renderBrowseDetail(card);
-}
-
 function openBrowseLibrary(card) {
   const libraryId = card.dataset.libraryId;
   if (!libraryId) return;
@@ -277,17 +168,14 @@ async function openBrowseCard(card) {
   }
   document.querySelectorAll('.browse-card.selected').forEach(el => el.classList.remove('selected'));
   card.classList.add('selected');
-  if (card.dataset.hydrated !== 'true') {
-    await hydrateCard(card);
-  }
   renderBrowseDetail(card);
 }
 
 function clearBrowseDetail() {
   selectedBrowseCard = null;
   const detailPanel = document.getElementById('browse-detail-panel');
-  if (!detailPanel) return;
   document.querySelectorAll('.browse-card.selected').forEach(el => el.classList.remove('selected'));
+  if (!detailPanel) return;
   detailPanel.innerHTML = `
     <div class="mini-title">Selected</div>
     <div class="mini-list">
@@ -303,6 +191,7 @@ function renderBrowseDetail(card) {
   const size = card.dataset.size || 'Unknown size';
   const categories = (card.dataset.categories || '').split('|').filter(Boolean);
   const inLibrary = Boolean(card.dataset.libraryId);
+  const target = boolSetting(browseSettings.browse_open_links_new_tab, true) ? ' target="_blank" rel="noopener"' : '';
   detailPanel.innerHTML = `
     <div class="mini-title">Selected</div>
     <div class="browse-detail-card">
@@ -313,6 +202,7 @@ function renderBrowseDetail(card) {
       <div class="card-tags">${categories.map(c => `<span class="tag-chip">${esc(c)}</span>`).join('')}</div>
       <div class="browse-detail-meta"><span>${esc(size)}</span></div>
       <div class="browse-card-actions">
+        <a class="btn btn-ghost btn-sm" href="${esc(card.dataset.url)}"${target}>FitGirl page</a>
         ${inLibrary
           ? `<button class="btn btn-library btn-sm" data-action="view-library" type="button">Open library</button>`
           : '<button class="btn btn-primary btn-sm" data-action="add" type="button">Add</button>'}
@@ -332,10 +222,6 @@ async function addCard(card, button) {
   const title = card.dataset.title;
   const gameUrl = card.dataset.url;
   button.disabled = true;
-  if (card.dataset.hydrated !== 'true') {
-    button.textContent = 'Loading...';
-    await hydrateCard(card);
-  }
   button.textContent = 'Scraping...';
   const res = await API.req('/api/games', 'POST', {
     title,
@@ -352,6 +238,7 @@ async function addCard(card, button) {
   knownTitles.add(title);
   knownListIds.set(title, res.id);
   toast(`Added ${res.added} of ${res.found} link(s) for ${title}`, 'ok');
+  setText('browse-last-add', `${res.added}/${res.found}`);
   updateBrowseCardLibraryState(card, res.id);
 
   if (boolSetting(browseSettings.auto_start_new_games)) {
@@ -361,6 +248,18 @@ async function addCard(card, button) {
       if (ok) toast(`Queued ${Number(ok.queued || 0)} file(s)`, 'ok');
     }
   }
+  updateBrowseSidePanel();
+}
+
+function setText(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = value;
+}
+
+function updateBrowseSidePanel(resultCount = null) {
+  setText('browse-known-count', String(knownTitles.size));
+  setText('browse-auto-start', boolSetting(browseSettings.auto_start_new_games) ? 'on' : 'off');
+  setText('browse-side-page', resultCount === null ? String(currentPage) : `${currentPage} (${resultCount})`);
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -426,5 +325,5 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   clearBrowseDetail();
-  loadBrowse('', 1);
+  renderBrowseStart();
 });

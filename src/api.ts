@@ -26,13 +26,16 @@ function downloadToDict(d: DownloadRow): Record<string, unknown> {
     progress: live?.progress ?? (totalBytes ? bytesDownloaded / totalBytes * 100 : 0),
     speed: live?.speed ?? 0,
     connections: live?.connections ?? 0,
-    gid: live?.gid ?? '',
+    gid: live?.gid ?? d.gid ?? '',
     error_message: live?.error ?? (status === 'failed' ? d.error_message : '') ?? '',
   };
 }
 
-function listToDict(lst: LinkListRow, includeDownloads = false): Record<string, unknown> {
-  const rows = queries.getDownloadsForList.all(lst.id);
+function listToDict(
+  lst: LinkListRow,
+  rows: DownloadRow[] = [],
+  includeDownloads = false,
+): Record<string, unknown> {
   const downloads = rows.map(downloadToDict);
   const totalBytes = downloads.reduce((sum, d) => sum + Number(d.total_bytes ?? 0), 0);
   const bytesDownloaded = downloads.reduce((sum, d) => sum + Number(d.bytes_downloaded ?? 0), 0);
@@ -42,7 +45,6 @@ function listToDict(lst: LinkListRow, includeDownloads = false): Record<string, 
     name: lst.name,
     source_url: lst.source_url ?? '',
     image_url: lst.image_url ?? '',
-    description: lst.description ?? '',
     size: lst.size ?? '',
     categories: (lst.categories ?? '').split('|').filter(Boolean),
     created_at: lst.created_at,
@@ -54,6 +56,21 @@ function listToDict(lst: LinkListRow, includeDownloads = false): Record<string, 
   };
   if (includeDownloads) data.downloads = downloads;
   return data;
+}
+
+function groupedDownloads(): Map<number, DownloadRow[]> {
+  const groups = new Map<number, DownloadRow[]>();
+  for (const row of queries.getAllDownloads.all()) {
+    const rows = groups.get(row.list_id) ?? [];
+    rows.push(row);
+    groups.set(row.list_id, rows);
+  }
+  return groups;
+}
+
+function listsPayload(includeDownloads = false): Record<string, unknown>[] {
+  const groups = groupedDownloads();
+  return queries.getLists.all().map(list => listToDict(list, groups.get(list.id) ?? [], includeDownloads));
 }
 
 // Helpers
@@ -87,14 +104,62 @@ function emptyStartResponse(requested = 0) {
   };
 }
 
+function markDownloadPending(dlId: number): void {
+  db.prepare<unknown, [number]>(`
+    UPDATE downloads
+    SET status='pending',
+        gid=NULL,
+        bytes_downloaded=0,
+        total_bytes=0,
+        completed_at=NULL,
+        error_message=NULL
+    WHERE id=?
+  `).run(dlId);
+}
+
+const idArrayBodySchema = {
+  type: 'object',
+  required: ['ids'],
+  additionalProperties: false,
+  properties: {
+    ids: {
+      type: 'array',
+      minItems: 0,
+      maxItems: 500,
+      items: {
+        anyOf: [
+          { type: 'integer', minimum: 1 },
+          { type: 'string', pattern: '^\\d+$' },
+        ],
+      },
+    },
+  },
+};
+
+const listIdParamSchema = {
+  type: 'object',
+  required: ['list_id'],
+  properties: {
+    list_id: { type: 'string', pattern: '^\\d+$' },
+  },
+};
+
+const downloadIdParamSchema = {
+  type: 'object',
+  required: ['dl_id'],
+  properties: {
+    dl_id: { type: 'string', pattern: '^\\d+$' },
+  },
+};
+
 export function registerApiRoutes(app: FastifyInstance): void {
   // === LIBRARY ROUTES ===
   app.get('/api/lists', () => {
-    return queries.getLists.all().map(list => listToDict(list));
+    return listsPayload(false);
   });
 
   app.get('/api/library', () => {
-    return { lists: queries.getLists.all().map(list => listToDict(list, true)) };
+    return { lists: listsPayload(true) };
   });
 
   app.post('/api/lists', {
@@ -102,7 +167,8 @@ export function registerApiRoutes(app: FastifyInstance): void {
       body: {
         type: 'object',
         required: ['name'],
-        properties: { name: { type: 'string' } },
+        additionalProperties: false,
+        properties: { name: { type: 'string', minLength: 1, maxLength: 200 } },
       },
     },
   }, (req, reply) => {
@@ -114,7 +180,9 @@ export function registerApiRoutes(app: FastifyInstance): void {
     return reply.status(201).send({ id: result.lastInsertRowid, name });
   });
 
-  app.delete('/api/lists/:list_id', async (req) => {
+  app.delete('/api/lists/:list_id', {
+    schema: { params: listIdParamSchema },
+  }, async (req) => {
     const { list_id } = req.params as { list_id: string };
     const id = Number.parseInt(list_id, 10);
     const list = queries.getListById.get(id);
@@ -127,18 +195,38 @@ export function registerApiRoutes(app: FastifyInstance): void {
     return { status: 'deleted' };
   });
 
-  app.get('/api/lists/:list_id/downloads', (req) => {
+  app.get('/api/lists/:list_id/downloads', {
+    schema: { params: listIdParamSchema },
+  }, (req) => {
     const { list_id } = req.params as { list_id: string };
     const id = Number.parseInt(list_id, 10);
+    if (!queries.getListById.get(id)) throw new HttpError(404, 'List not found.');
     return queries.getDownloadsForList.all(id).map(downloadToDict);
   });
 
-  app.post('/api/lists/:list_id/links', async (req) => {
+  app.post('/api/lists/:list_id/links', {
+    schema: {
+      params: listIdParamSchema,
+      body: {
+        type: 'object',
+        required: ['urls'],
+        additionalProperties: false,
+        properties: {
+          urls: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 200,
+            items: { type: 'string', minLength: 1, maxLength: 2048 },
+          },
+        },
+      },
+    },
+  }, async (req) => {
     const { list_id } = req.params as { list_id: string };
     const body = req.body as { urls?: string[] };
     const id = Number.parseInt(list_id, 10);
     if (!queries.getListById.get(id)) throw new HttpError(404, 'List not found.');
-    const urls = Array.isArray(body.urls) ? body.urls.slice(0, 200) : [];
+    const urls = Array.isArray(body.urls) ? body.urls : [];
     const existing = new Set(
       db.prepare<{ source_url: string }, [number]>(
         `SELECT source_url FROM downloads WHERE list_id=?`,
@@ -157,15 +245,33 @@ export function registerApiRoutes(app: FastifyInstance): void {
       existing.add(url);
       if (result.changes > 0) added++;
     }
-    return { added };
+    return { submitted: urls.length, added };
   });
 
-  app.post('/api/games', async (req, reply) => {
+  app.post('/api/games', {
+    schema: {
+      body: {
+        type: 'object',
+        required: ['title', 'game_url'],
+        additionalProperties: false,
+        properties: {
+          title: { type: 'string', minLength: 1, maxLength: 200 },
+          game_url: { type: 'string', minLength: 1, maxLength: 2048 },
+          image_url: { type: 'string', maxLength: 2048 },
+          size: { type: 'string', maxLength: 120 },
+          categories: {
+            type: 'array',
+            maxItems: 20,
+            items: { type: 'string', maxLength: 80 },
+          },
+        },
+      },
+    },
+  }, async (req, reply) => {
     const body = req.body as {
       title?: string;
       game_url?: string;
       image_url?: string;
-      description?: string;
       size?: string;
       categories?: string[];
     };
@@ -187,9 +293,6 @@ export function registerApiRoutes(app: FastifyInstance): void {
     }
     if (body.image_url && !list.image_url) {
       db.prepare<unknown, [string, number]>(`UPDATE link_lists SET image_url=? WHERE id=?`).run(body.image_url.trim(), list.id);
-    }
-    if (body.description && !list.description) {
-      db.prepare<unknown, [string, number]>(`UPDATE link_lists SET description=? WHERE id=?`).run(body.description.trim().slice(0, 2000), list.id);
     }
     if (size && !list.size) {
       db.prepare<unknown, [string, number]>(`UPDATE link_lists SET size=? WHERE id=?`).run(size, list.id);
@@ -240,6 +343,7 @@ export function registerApiRoutes(app: FastifyInstance): void {
           list_id: list.id,
           source_url: url,
           resolved_url: null,
+          gid: null,
           filename,
           status: 'pending',
           bytes_downloaded: 0,
@@ -263,7 +367,9 @@ export function registerApiRoutes(app: FastifyInstance): void {
   });
 
   // === DOWNLOAD ROUTES ===
-  app.post('/api/downloads/batch/start', async (req) => {
+  app.post('/api/downloads/batch/start', {
+    schema: { body: idArrayBodySchema },
+  }, async (req) => {
     const ids = uniqueIds((req.body as { ids?: unknown }).ids);
     if (!ids.length) return emptyStartResponse(0);
 
@@ -293,7 +399,9 @@ export function registerApiRoutes(app: FastifyInstance): void {
     };
   });
 
-  app.post('/api/downloads/batch/pause', async (req) => {
+  app.post('/api/downloads/batch/pause', {
+    schema: { body: idArrayBodySchema },
+  }, async (req) => {
     const ids = uniqueIds((req.body as { ids?: unknown }).ids);
     const rows = rowsByIds(ids);
     const foundIds = new Set(rows.map(row => row.id));
@@ -326,7 +434,9 @@ export function registerApiRoutes(app: FastifyInstance): void {
     return { paused: pausedIds.length, requested: ids.length, paused_ids: pausedIds, skipped_ids: skippedIds };
   });
 
-  app.post('/api/downloads/batch/resume', async (req) => {
+  app.post('/api/downloads/batch/resume', {
+    schema: { body: idArrayBodySchema },
+  }, async (req) => {
     const ids = uniqueIds((req.body as { ids?: unknown }).ids);
     if (!ids.length) {
       return {
@@ -360,9 +470,16 @@ export function registerApiRoutes(app: FastifyInstance): void {
 
       if (effectiveStatus === 'paused') {
         try {
-          await aria2.resume(dl.id);
-          db.prepare<unknown, [number]>(`UPDATE downloads SET status='downloading' WHERE id=?`).run(dl.id);
-          resumedIds.push(dl.id);
+          const resumed = await aria2.resume(dl.id);
+          if (resumed) {
+            db.prepare<unknown, [number]>(`UPDATE downloads SET status='downloading' WHERE id=?`).run(dl.id);
+            resumedIds.push(dl.id);
+          } else {
+            const status = await aria2.queueDownloadStart(dl, basePath, true);
+            if (status === 'queued') queuedIds.push(dl.id);
+            else if (status === 'already_running') alreadyRunningIds.push(dl.id);
+            else skippedIds.push(dl.id);
+          }
         } catch (err) {
           if (aria2.needsFreshStart(err instanceof Error ? err.message : String(err))) {
             await aria2.stop(dl.id);
@@ -431,7 +548,9 @@ export function registerApiRoutes(app: FastifyInstance): void {
     };
   });
 
-  app.post('/api/downloads/batch/stop', async (req) => {
+  app.post('/api/downloads/batch/stop', {
+    schema: { body: idArrayBodySchema },
+  }, async (req) => {
     const ids = uniqueIds((req.body as { ids?: unknown }).ids);
     const rows = rowsByIds(ids);
     const foundIds = new Set(rows.map(row => row.id));
@@ -441,14 +560,16 @@ export function registerApiRoutes(app: FastifyInstance): void {
     for (const dl of rows) {
       aria2.cancelStartingDownload(dl.id);
       await aria2.stop(dl.id);
-      db.prepare<unknown, [number]>(`UPDATE downloads SET status='pending' WHERE id=?`).run(dl.id);
+      markDownloadPending(dl.id);
       stoppedIds.push(dl.id);
     }
 
     return { stopped: stoppedIds.length, skipped: skippedIds.length, stopped_ids: stoppedIds, skipped_ids: skippedIds };
   });
 
-  app.post('/api/downloads/:dl_id/start', async (req) => {
+  app.post('/api/downloads/:dl_id/start', {
+    schema: { params: downloadIdParamSchema },
+  }, async (req) => {
     const { dl_id } = req.params as { dl_id: string };
     const dlId = Number.parseInt(dl_id, 10);
     const dl = queries.getDownloadById.get(dlId);
@@ -462,7 +583,9 @@ export function registerApiRoutes(app: FastifyInstance): void {
     throw new HttpError(400, 'Download cannot be started.');
   });
 
-  app.post('/api/downloads/:dl_id/pause', async (req) => {
+  app.post('/api/downloads/:dl_id/pause', {
+    schema: { params: downloadIdParamSchema },
+  }, async (req) => {
     const { dl_id } = req.params as { dl_id: string };
     const dlId = Number.parseInt(dl_id, 10);
     const dl = queries.getDownloadById.get(dlId);
@@ -480,7 +603,9 @@ export function registerApiRoutes(app: FastifyInstance): void {
     return { status: 'paused' };
   });
 
-  app.post('/api/downloads/:dl_id/resume', async (req) => {
+  app.post('/api/downloads/:dl_id/resume', {
+    schema: { params: downloadIdParamSchema },
+  }, async (req) => {
     const { dl_id } = req.params as { dl_id: string };
     const dlId = Number.parseInt(dl_id, 10);
     const dl = queries.getDownloadById.get(dlId);
@@ -491,9 +616,15 @@ export function registerApiRoutes(app: FastifyInstance): void {
 
     if (effectiveStatus === 'paused') {
       try {
-        await aria2.resume(dlId);
-        db.prepare<unknown, [number]>(`UPDATE downloads SET status='downloading' WHERE id=?`).run(dlId);
-        return { status: 'resumed' };
+        const resumed = await aria2.resume(dlId);
+        if (resumed) {
+          db.prepare<unknown, [number]>(`UPDATE downloads SET status='downloading' WHERE id=?`).run(dlId);
+          return { status: 'resumed' };
+        }
+        const status = await aria2.queueDownloadStart(dl, basePath, true);
+        if (status === 'queued') return { status: 'queued', restored: true };
+        if (status === 'already_running') return { status: 'already_running' };
+        throw new HttpError(409, 'Paused download is no longer tracked by aria2c and could not be queued.');
       } catch (err) {
         if (aria2.needsFreshStart(err instanceof Error ? err.message : String(err))) {
           await aria2.stop(dlId);
@@ -532,16 +663,22 @@ export function registerApiRoutes(app: FastifyInstance): void {
     throw new HttpError(400, 'Download cannot be resumed.');
   });
 
-  app.post('/api/downloads/:dl_id/stop', async (req) => {
+  app.post('/api/downloads/:dl_id/stop', {
+    schema: { params: downloadIdParamSchema },
+  }, async (req) => {
     const { dl_id } = req.params as { dl_id: string };
     const dlId = Number.parseInt(dl_id, 10);
+    const dl = queries.getDownloadById.get(dlId);
+    if (!dl) throw new HttpError(404, 'Download not found.');
     aria2.cancelStartingDownload(dlId);
     await aria2.stop(dlId);
-    db.prepare<unknown, [number]>(`UPDATE downloads SET status='pending' WHERE id=?`).run(dlId);
+    markDownloadPending(dlId);
     return { status: 'stopped' };
   });
 
-  app.delete('/api/downloads/:dl_id', async (req) => {
+  app.delete('/api/downloads/:dl_id', {
+    schema: { params: downloadIdParamSchema },
+  }, async (req) => {
     const { dl_id } = req.params as { dl_id: string };
     const dlId = Number.parseInt(dl_id, 10);
     const dl = queries.getDownloadById.get(dlId);
@@ -553,7 +690,24 @@ export function registerApiRoutes(app: FastifyInstance): void {
   });
 
   // === SCRAPE ROUTES ===
-  app.post('/api/scrape/links', async (req) => {
+  app.post('/api/scrape/links', {
+    schema: {
+      body: {
+        type: 'object',
+        required: ['game_url', 'list_id'],
+        additionalProperties: false,
+        properties: {
+          game_url: { type: 'string', minLength: 1, maxLength: 2048 },
+          list_id: {
+            anyOf: [
+              { type: 'integer', minimum: 1 },
+              { type: 'string', pattern: '^\\d+$' },
+            ],
+          },
+        },
+      },
+    },
+  }, async (req) => {
     const body = req.body as { game_url?: string; list_id?: number };
     const listId = Number(body.list_id);
     if (!queries.getListById.get(listId)) throw new HttpError(404, 'List not found.');
@@ -585,7 +739,20 @@ export function registerApiRoutes(app: FastifyInstance): void {
     return { found: links.length, added, links };
   });
 
-  app.get('/api/scrape/search', async (req) => {
+  app.get('/api/scrape/search', {
+    schema: {
+      querystring: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          query: { type: 'string', maxLength: 200 },
+          page: { type: 'string', pattern: '^\\d+$' },
+          limit: { type: 'string', pattern: '^\\d+$' },
+          hydrate: { type: 'string', enum: ['true', 'false'] },
+        },
+      },
+    },
+  }, async (req) => {
     const query = req.query as Record<string, string | undefined>;
     try {
       const page = Math.max(1, Number.parseInt(query.page ?? '1', 10) || 1);
@@ -604,7 +771,18 @@ export function registerApiRoutes(app: FastifyInstance): void {
     }
   });
 
-  app.get('/api/scrape/details', async (req) => {
+  app.get('/api/scrape/details', {
+    schema: {
+      querystring: {
+        type: 'object',
+        required: ['url'],
+        additionalProperties: false,
+        properties: {
+          url: { type: 'string', minLength: 1, maxLength: 2048 },
+        },
+      },
+    },
+  }, async (req) => {
     const query = req.query as { url?: string };
     if (!query.url) throw new HttpError(400, 'url query parameter is required.');
     const gameUrl = await cleanUrl(query.url, FITGIRL_HOSTS, 'FitGirl URL');
@@ -616,7 +794,18 @@ export function registerApiRoutes(app: FastifyInstance): void {
   });
 
   // === IMAGE ROUTES ===
-  app.get('/api/image', async (req, reply) => {
+  app.get('/api/image', {
+    schema: {
+      querystring: {
+        type: 'object',
+        required: ['url'],
+        additionalProperties: false,
+        properties: {
+          url: { type: 'string', minLength: 1, maxLength: 4096 },
+        },
+      },
+    },
+  }, async (req, reply) => {
     const query = req.query as { url?: string };
     const url = query.url ?? '';
     if (!(await isPublicHttpUrl(url))) throw new HttpError(400, 'Unsupported image URL.');
@@ -668,7 +857,14 @@ export function registerApiRoutes(app: FastifyInstance): void {
   // === SETTINGS ROUTES ===
   app.get('/api/settings', () => settingsSnapshot());
 
-  app.put('/api/settings', async (req) => {
+  app.put('/api/settings', {
+    schema: {
+      body: {
+        type: 'object',
+        additionalProperties: true,
+      },
+    },
+  }, async (req) => {
     const body = req.body as Record<string, unknown>;
     const normalised = normaliseSettings(body);
     persistSettings(normalised);
@@ -709,10 +905,11 @@ const ALLOWED_SETTINGS = new Set([
   'connections_per_file',
   'auto_start_new_games',
   'browse_items_per_page',
-  'browse_card_size',
-  'browse_show_descriptions',
+  'browse_card_height',
   'browse_open_links_new_tab',
-  'library_card_size',
+  'library_card_height',
+  'card_ratio_width',
+  'card_ratio_height',
   'library_default_detail',
   'library_show_file_urls',
   'confirm_delete',
@@ -725,18 +922,19 @@ const INT_RANGES: Record<string, [number, number]> = {
   max_concurrent: [1, 32],
   connections_per_file: [1, 16],
   browse_items_per_page: [6, 60],
+  browse_card_height: [120, 320],
+  library_card_height: [120, 320],
+  card_ratio_width: [1, 8],
+  card_ratio_height: [1, 8],
   interface_scale: [85, 125],
 };
 
 const CHOICE_SETTINGS: Record<string, Set<string>> = {
-  browse_card_size: new Set(['compact', 'medium', 'large']),
-  library_card_size: new Set(['compact', 'medium', 'large']),
   theme_density: new Set(['compact', 'comfortable', 'spacious']),
 };
 
 const BOOL_SETTINGS = new Set([
   'auto_start_new_games',
-  'browse_show_descriptions',
   'browse_open_links_new_tab',
   'library_default_detail',
   'library_show_file_urls',
@@ -765,10 +963,11 @@ function normaliseSettings(input: Record<string, unknown>): Record<string, strin
   const result: Record<string, string> = {};
   for (const [key, value] of Object.entries(input)) {
     if (key in INT_RANGES) {
-      const n = Number.parseInt(String(value ?? ''), 10);
-      if (!Number.isInteger(n)) {
+      const text = String(value ?? '').trim();
+      if (!/^-?\d+$/.test(text)) {
         throw new HttpError(400, `${key} must be an integer.`);
       }
+      const n = Number.parseInt(text, 10);
       const [min, max] = INT_RANGES[key];
       if (n < min || n > max) {
         throw new HttpError(400, `${key} must be between ${min} and ${max}.`);

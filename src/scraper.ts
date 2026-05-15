@@ -1,7 +1,7 @@
 import * as cheerio from 'cheerio';
 import type { CheerioAPI } from 'cheerio';
 import type { AnyNode, Element } from 'domhandler';
-import { chromium, type Browser } from 'playwright';
+import { chromium, type Browser, type BrowserContext } from 'playwright';
 import { FUCKINGFAST_HOSTS, FITGIRL_HOSTS } from './config.js';
 
 const HEADERS = {
@@ -23,9 +23,16 @@ const HEADERS = {
 
 const POPULAR_REPACKS_URL = 'https://fitgirl-repacks.site/popular-repacks-of-the-year/';
 const CACHE_TTL_MS = 5 * 60 * 1000;
+const BROWSER_FETCH_TIMEOUT_MS = 14000;
+const BROWSER_FETCH_TOTAL_TIMEOUT_MS = 18000;
+const BROWSER_FETCH_CONCURRENCY = 2;
+const DETAIL_HYDRATE_CONCURRENCY = 3;
 
 let browser: Browser | null = null;
+let browserContext: BrowserContext | null = null;
 let browserLaunchPromise: Promise<Browser> | null = null;
+let activeBrowserFetches = 0;
+const browserFetchQueue: Array<() => void> = [];
 
 async function getBrowser(): Promise<Browser> {
   if (browser) return browser;
@@ -38,6 +45,7 @@ async function getBrowser(): Promise<Browser> {
     browser = launched;
     launched.on('disconnected', () => {
       if (browser === launched) browser = null;
+      browserContext = null;
     });
     return launched;
   }).finally(() => {
@@ -47,7 +55,9 @@ async function getBrowser(): Promise<Browser> {
   return browserLaunchPromise;
 }
 
-async function browserFetchHtml(url: string): Promise<string> {
+async function getBrowserContext(): Promise<BrowserContext> {
+  if (browserContext) return browserContext;
+
   const browserInstance = await getBrowser();
   const context = await browserInstance.newContext({
     userAgent: HEADERS['user-agent'],
@@ -66,10 +76,63 @@ async function browserFetchHtml(url: string): Promise<string> {
       'upgrade-insecure-requests': HEADERS['upgrade-insecure-requests'],
     },
   });
-  const page = await context.newPage();
+  context.setDefaultNavigationTimeout(BROWSER_FETCH_TIMEOUT_MS);
+  context.setDefaultTimeout(7000);
+  await context.route('**/*', route => {
+    const type = route.request().resourceType();
+    if (['image', 'font', 'media', 'stylesheet'].includes(type)) {
+      return route.abort().catch(() => undefined);
+    }
+    return route.continue().catch(() => undefined);
+  });
+  context.on('close', () => {
+    if (browserContext === context) browserContext = null;
+  });
+  browserContext = context;
+  return context;
+}
+
+async function acquireBrowserFetchSlot(): Promise<void> {
+  if (activeBrowserFetches < BROWSER_FETCH_CONCURRENCY) {
+    activeBrowserFetches++;
+    return;
+  }
+  return new Promise(resolve => {
+    browserFetchQueue.push(() => {
+      activeBrowserFetches++;
+      resolve();
+    });
+  });
+}
+
+function releaseBrowserFetchSlot(): void {
+  activeBrowserFetches = Math.max(0, activeBrowserFetches - 1);
+  const next = browserFetchQueue.shift();
+  if (next) next();
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function browserFetchHtml(url: string): Promise<string> {
+  await acquireBrowserFetchSlot();
+  let page: Awaited<ReturnType<BrowserContext['newPage']>> | null = null;
 
   try {
-    const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    const context = await getBrowserContext();
+    page = await context.newPage();
+    const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: BROWSER_FETCH_TIMEOUT_MS });
     if (!response) {
       throw new Error(`No response loading ${url}`);
     }
@@ -83,12 +146,19 @@ async function browserFetchHtml(url: string): Promise<string> {
       }
       throw new Error(`HTTP ${status} fetching ${url}`);
     }
-    await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => null);
+    await page.waitForSelector('article, .entry-content, .dlinks, body', { timeout: 5000 }).catch(() => null);
     return await page.content();
   } finally {
-    await page.close();
-    await context.close();
+    await page?.close().catch(() => undefined);
+    releaseBrowserFetchSlot();
   }
+}
+
+export async function closeScraperBrowser(): Promise<void> {
+  await browserContext?.close().catch(() => undefined);
+  browserContext = null;
+  await browser?.close().catch(() => undefined);
+  browser = null;
 }
 
 const ARCHIVE_RE = /(?<name>[A-Za-z0-9][A-Za-z0-9 ._+()[\]{}'!,&@#$%^=-]{2,240}\.(?:part\d+\.rar|rar|r\d{2}|zip|7z|iso|bin))/i;
@@ -97,14 +167,6 @@ const SIZE_VALUE_RE = /(?:from\s+)?(?:\d+(?:[.,]\d+)?\s*(?:KB|MB|GB|TB)?\s*(?:\/
 
 const GAME_CATEGORIES = new Set(['lossless repack', 'hypervisor bypass', 'switch emulated']);
 const SKIP_CATEGORIES = new Set(['uncategorized', 'updates digest']);
-const STOP_EXCERPT_MARKERS = [
-  'download mirrors',
-  'download mirror',
-  'filehoster:',
-  'backwards compatibility',
-  'problems during installation',
-  'selective download',
-];
 const STOPWORDS = new Set(['a', 'an', 'and', 'for', 'of', 'the', 'to', 'with', 'in', 'on', 'pc', 'game']);
 
 export interface ResolvedDownload {
@@ -116,7 +178,6 @@ export interface GameResult {
   title: string;
   url: string;
   image: string | null;
-  excerpt: string;
   size: string | null;
   categories: string[];
 }
@@ -216,7 +277,11 @@ function bestFilenameFromText(text: string): string | null {
 }
 
 async function fetchHtml(url: string): Promise<string> {
-  return await browserFetchHtml(url);
+  return await withTimeout(
+    browserFetchHtml(url),
+    BROWSER_FETCH_TOTAL_TIMEOUT_MS,
+    `Timed out loading ${url}. The site may be delaying browser access with DDoS protection.`,
+  );
 }
 
 export async function getFuckingFastDownloads(
@@ -272,16 +337,25 @@ export async function resolveFuckingFastDownloadInfo(ffUrl: string): Promise<Res
 
     for (const script of $('script').toArray()) {
       const text = $(script).html() ?? '';
-      const match = /window\.open\(['"]+(https?:\/\/[^'")\s]+)/.exec(text);
-      if (match) return { url: match[1], filename };
+      const patterns = [
+        /window\.open\(\s*['"]+(https?:\/\/[^'")\s]+)/ig,
+        /(?:location\.href|window\.location)\s*=\s*['"]+(https?:\/\/[^'")\s]+)/ig,
+        /['"]url['"]\s*:\s*['"]+(https?:\/\/[^'")\s]+)/ig,
+        /https?:\/\/[^\s'"<>\\]+/ig,
+      ];
+      for (const pattern of patterns) {
+        pattern.lastIndex = 0;
+        for (const match of text.matchAll(pattern)) {
+          const candidate = match[1] ?? match[0];
+          if (looksLikeDownloadUrl(candidate)) return { url: candidate, filename };
+        }
+      }
     }
 
     for (const el of $('a[href]').toArray()) {
       const href = new URL($(el).attr('href')!, ffUrl).href;
       const anchorName = cleanFilename($(el).attr('download')) ?? cleanFilename($(el).text().trim());
-      const lower = href.toLowerCase().split('?', 1)[0];
-      if (['.zip', '.rar', '.iso', '.7z'].some(ext => lower.endsWith(ext)) ||
-        /\.(part\d+\.rar|r\d{2})(?:[?#].*)?$/i.test(href)) {
+      if (looksLikeDownloadUrl(href)) {
         return { url: href, filename: filename ?? anchorName ?? cleanFilename(href) };
       }
     }
@@ -292,6 +366,19 @@ export async function resolveFuckingFastDownloadInfo(ffUrl: string): Promise<Res
   } finally {
     clearTimeout(timer);
   }
+}
+
+function looksLikeDownloadUrl(value: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return false;
+  }
+  const lowerPath = parsed.pathname.toLowerCase();
+  return ['.zip', '.rar', '.iso', '.7z', '.bin'].some(ext => lowerPath.endsWith(ext)) ||
+    /\.(part\d+\.rar|r\d{2})(?:$|[?#])/i.test(parsed.href) ||
+    /\/download(?:$|[/?#])/i.test(parsed.pathname);
 }
 
 export async function resolveFuckingFastDownload(ffUrl: string): Promise<string> {
@@ -359,19 +446,6 @@ function matchesQuery(title: string, query: string): boolean {
   return tokens.every(token => titleWords.has(token) || normalizedTitle.includes(token));
 }
 
-function cleanExcerpt(text: string): string {
-  let out = (text || ' ').replace(/\s+/g, ' ').trim();
-  const lower = out.toLowerCase();
-  let cutAt = out.length;
-  for (const marker of STOP_EXCERPT_MARKERS) {
-    const idx = lower.indexOf(marker);
-    if (idx !== -1) cutAt = Math.min(cutAt, idx);
-  }
-  out = out.slice(0, cutAt).replace(/^[\s\-\u2013\u2014|]+|[\s\-\u2013\u2014|\n\t]+$/g, '');
-  out = out.replace(/#\d+\s*/g, '');
-  return out.slice(0, 260).replace(/[\s,;:\-\u2013\u2014]+$/g, '');
-}
-
 function cleanSize(value: string): string | null {
   const out = (value || '')
     .replace(/\s+/g, ' ')
@@ -419,23 +493,13 @@ function imageFromArticle($: CheerioAPI, article: AnyNode, baseUrl: string): str
   return imageFromImg($, img, baseUrl);
 }
 
-function excerptFromArticle($: CheerioAPI, article: AnyNode): string {
-  const content = $(article).find('.entry-content').first();
-  if (!content.length) return '';
-  for (const node of content.children('p, div').toArray()) {
-    const text = cleanExcerpt($(node).text().trim());
-    if (text.length > 30) return text;
-  }
-  return cleanExcerpt(content.text().trim());
-}
-
 function sizeFromArticle($: CheerioAPI, article: AnyNode): string | null {
   const content = $(article).find('.entry-content').first();
   return sizeFromText((content.length ? content : $(article)).text());
 }
 
 async function enrichGame(game: InternalGameResult): Promise<InternalGameResult> {
-  if (game.image && game.excerpt && game.size) return game;
+  if (game.image && game.size) return game;
   const html = await fetchHtml(game.url);
   const $ = cheerio.load(html);
   const article = $('article').first()[0] ?? $('body')[0];
@@ -445,15 +509,35 @@ async function enrichGame(game: InternalGameResult): Promise<InternalGameResult>
   return {
     ...game,
     image: game.image ?? imageFromArticle($, article, game.url),
-    excerpt: game.excerpt || excerptFromArticle($, article),
     size: game.size ?? sizeFromArticle($, article),
     categories: getArticleCategories($, article),
     is_game: true,
   };
 }
 
+async function mapConcurrent<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<Array<PromiseSettledResult<R>>> {
+  const results: Array<PromiseSettledResult<R>> = new Array(items.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const idx = nextIndex++;
+      try {
+        results[idx] = { status: 'fulfilled', value: await worker(items[idx], idx) };
+      } catch (reason) {
+        results[idx] = { status: 'rejected', reason };
+      }
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 async function enrichGames(games: InternalGameResult[]): Promise<GameResult[]> {
-  const results = await Promise.allSettled(games.map(game => enrichGame({ ...game })));
+  const results = await mapConcurrent(games, DETAIL_HYDRATE_CONCURRENCY, game => enrichGame({ ...game }));
   return results
     .map((result, idx) => result.status === 'fulfilled' ? result.value : games[idx])
     .filter(game => game.is_game !== false)
@@ -465,7 +549,6 @@ function publicGame(game: InternalGameResult): GameResult {
     title: game.title,
     url: game.url,
     image: game.image,
-    excerpt: game.excerpt,
     size: game.size,
     categories: game.categories,
   };
@@ -479,7 +562,6 @@ export async function getFitgirlGameDetails(gameUrl: string): Promise<Partial<Ga
     title: '',
     url: gameUrl,
     image: null,
-    excerpt: '',
     size: null,
     categories: [],
     is_game: true,
@@ -524,7 +606,6 @@ function popularGamesFromPage($: CheerioAPI, baseUrl: string): InternalGameResul
       title,
       url: href,
       image: imageFromImg($, img, href),
-      excerpt: '',
       size: null,
       categories: [],
       is_game: true,
@@ -562,7 +643,7 @@ export async function searchFitgirl(
     const popular = popularGamesFromPage($, url);
     games = popular.slice((page - 1) * limit, page * limit);
   } else {
-    for (const article of $('article').slice(0, Math.max(32, limit * 2)).toArray()) {
+    for (const article of $('article').toArray()) {
       if (!isGameArticle($, article)) continue;
       const titleTag = $(article).find('h1.entry-title, h2.entry-title').first();
       const linkTag = titleTag.find('a').first();
@@ -575,7 +656,6 @@ export async function searchFitgirl(
         title,
         url: gameUrl,
         image: imageFromArticle($, article, gameUrl),
-        excerpt: excerptFromArticle($, article),
         size: sizeFromArticle($, article),
         categories: getArticleCategories($, article),
         is_game: true,

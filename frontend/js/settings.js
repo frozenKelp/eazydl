@@ -1,5 +1,5 @@
 async function loadSettings() {
-  const settings = await getSettings();
+  const settings = await getSettings(true);
   applyInterfaceSettings(settings);
   applySettingsToForm(settings);
   await loadRuntime();
@@ -14,6 +14,7 @@ function applySettingsToForm(settings) {
       field.value = value;
     }
   });
+  syncLinkedNumbers();
 
   syncScaleLabel();
 }
@@ -54,6 +55,7 @@ async function saveSettings(e) {
   const data = collectSettings(e.currentTarget);
   const ok = await API.req('/api/settings', 'PUT', data);
   if (ok) {
+    clearSettingsCache();
     toast('Settings saved', 'ok');
     await loadSettings();
   }
@@ -74,12 +76,36 @@ function syncScaleLabel() {
   if (scale && label) label.textContent = `${scale.value}%`;
 }
 
-function previewScale() {
+function previewAppearance() {
   const scale = document.getElementById('interface_scale');
-  if (!scale) return;
   syncScaleLabel();
-  const value = Math.max(85, Math.min(125, Number(scale.value || 100)));
-  document.documentElement.style.fontSize = `${14 * (value / 100)}px`;
+  const form = document.getElementById('settings-form');
+  if (!form) return;
+  applyInterfaceSettings({ ...SETTINGS_DEFAULTS, ...collectSettings(form) });
+}
+
+function syncLinkedNumbers(source = null) {
+  document.querySelectorAll('[data-linked-number]').forEach(numberInput => {
+    const range = document.getElementById(numberInput.dataset.linkedNumber);
+    if (!range) return;
+    if (source === numberInput) range.value = numberInput.value;
+    else numberInput.value = range.value;
+  });
+}
+
+function bindLinkedNumbers() {
+  document.querySelectorAll('[data-linked-number]').forEach(numberInput => {
+    const range = document.getElementById(numberInput.dataset.linkedNumber);
+    if (!range) return;
+    range.addEventListener('input', () => {
+      numberInput.value = range.value;
+      previewAppearance();
+    });
+    numberInput.addEventListener('input', () => {
+      range.value = numberInput.value;
+      previewAppearance();
+    });
+  });
 }
 
 function resetSettingsForm() {
@@ -94,7 +120,10 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('[data-settings-tab]').forEach(btn => {
     btn.addEventListener('click', () => showPanel(btn.dataset.settingsTab));
   });
-  document.getElementById('interface_scale').addEventListener('input', previewScale);
+  bindLinkedNumbers();
+  document.getElementById('interface_scale').addEventListener('input', previewAppearance);
+  document.getElementById('card_ratio_width').addEventListener('input', previewAppearance);
+  document.getElementById('card_ratio_height').addEventListener('input', previewAppearance);
   showPanel('downloads');
   loadSettings();
   setInterval(loadRuntime, 5000);

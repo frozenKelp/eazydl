@@ -1,7 +1,13 @@
 const SETTINGS_DEFAULTS = {
+  download_path: 'downloads',
+  max_concurrent: '3',
+  connections_per_file: '4',
   browse_items_per_page: '24',
-  browse_card_size: 'medium',
-  library_card_size: 'medium',
+  browse_card_height: '172',
+  library_card_height: '172',
+  card_ratio_width: '4',
+  card_ratio_height: '3',
+  browse_open_links_new_tab: 'true',
   library_default_detail: 'false',
   library_show_file_urls: 'true',
   confirm_delete: 'true',
@@ -19,10 +25,14 @@ const API = {
   _ws: null,
   _callbacks: [],
   _wsSeenAt: 0,
+  _reconnectTimer: null,
 
-  async req(url, method = 'GET', body = null) {
+  async req(url, method = 'GET', body = null, options = {}) {
+    const timeoutMs = options.timeoutMs ?? 30000;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const opts = { method, headers: { 'Content-Type': 'application/json' } };
+      const opts = { method, headers: { 'Content-Type': 'application/json' }, signal: controller.signal };
       if (body !== null) opts.body = JSON.stringify(body);
       const res = await fetch(url, opts);
       if (!res.ok) {
@@ -31,13 +41,16 @@ const API = {
         return null;
       }
       return await res.json();
-    } catch {
-      toast('Network error. Is the server running?', 'err');
+    } catch (err) {
+      toast(err?.name === 'AbortError' ? 'Request timed out. Try again in a moment.' : 'Network error. Is the server running?', 'err');
       return null;
+    } finally {
+      clearTimeout(timer);
     }
   },
 
   connectWS() {
+    if (this._ws && [WebSocket.CONNECTING, WebSocket.OPEN].includes(this._ws.readyState)) return;
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     this._ws = new WebSocket(`${proto}://${location.host}/ws/progress`);
 
@@ -53,7 +66,10 @@ const API = {
       }
     };
 
-    this._ws.onclose = () => setTimeout(() => this.connectWS(), 3000);
+    this._ws.onclose = () => {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = setTimeout(() => this.connectWS(), 3000);
+    };
     this._ws.onerror = () => this._ws.close();
   },
 
@@ -135,7 +151,12 @@ function boolSetting(value, fallback = false) {
   return ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase());
 }
 
-async function getSettings() {
+function clearSettingsCache() {
+  cachedSettingsPromise = null;
+}
+
+async function getSettings(force = false) {
+  if (force) clearSettingsCache();
   if (!cachedSettingsPromise) cachedSettingsPromise = API.req('/api/settings');
   const settings = await cachedSettingsPromise;
   return { ...SETTINGS_DEFAULTS, ...(settings || {}) };
@@ -143,7 +164,15 @@ async function getSettings() {
 
 function applyInterfaceSettings(settings) {
   const scale = Math.max(85, Math.min(125, Number(settings.interface_scale || 100)));
+  const browseHeight = Math.max(120, Math.min(320, Number(settings.browse_card_height || 172)));
+  const libraryHeight = Math.max(120, Math.min(320, Number(settings.library_card_height || 172)));
+  const ratioW = Math.max(1, Math.min(8, Number(settings.card_ratio_width || 4)));
+  const ratioH = Math.max(1, Math.min(8, Number(settings.card_ratio_height || 3)));
   document.documentElement.style.fontSize = `${14 * (scale / 100)}px`;
+  document.documentElement.style.setProperty('--browse-card-media-h', `${browseHeight}px`);
+  document.documentElement.style.setProperty('--library-card-media-h', `${libraryHeight}px`);
+  document.documentElement.style.setProperty('--card-ratio-w', String(ratioW));
+  document.documentElement.style.setProperty('--card-ratio-h', String(ratioH));
   document.body.dataset.density = settings.theme_density || 'comfortable';
   document.body.dataset.reduceMotion = boolSetting(settings.reduce_motion) ? 'true' : 'false';
 }

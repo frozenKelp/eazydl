@@ -28,6 +28,7 @@ export interface DownloadRow {
   list_id: number;
   source_url: string;
   resolved_url: string | null;
+  gid: string | null;
   filename: string;
   status: string;
   bytes_downloaded: number;
@@ -60,6 +61,7 @@ export function initDb(): void {
       list_id           INTEGER REFERENCES link_lists(id) ON DELETE CASCADE,
       source_url        TEXT NOT NULL,
       resolved_url      TEXT,
+      gid               TEXT,
       filename          TEXT DEFAULT '',
       status            TEXT DEFAULT 'pending',
       bytes_downloaded  INTEGER DEFAULT 0,
@@ -80,7 +82,6 @@ export function initDb(): void {
 
   runMigrations();
   createDownloadUniqueIndex();
-  resetInFlightDownloads();
   seedDefaultSettings();
   normaliseSizePrefixes();
 }
@@ -102,6 +103,13 @@ function runMigrations(): void {
       db.run(`ALTER TABLE link_lists ADD COLUMN ${col} ${type}`);
     }
   }
+
+  const existingDownloadCols = new Set(
+    db.query<{ name: string }, []>('PRAGMA table_info(downloads)').all().map(r => r.name),
+  );
+  if (!existingDownloadCols.has('gid')) {
+    db.run(`ALTER TABLE downloads ADD COLUMN gid TEXT`);
+  }
 }
 
 function createDownloadUniqueIndex(): void {
@@ -121,12 +129,14 @@ function createDownloadUniqueIndex(): void {
   createIndex();
 }
 
-function resetInFlightDownloads(): void {
+export function markUntrackedInFlightDownloads(message: string): void {
   db.prepare(`
     UPDATE downloads
-    SET status = 'pending'
-    WHERE status IN ('downloading', 'queued', 'paused')
-  `).run();
+    SET status = 'pending',
+        gid = NULL,
+        error_message = ?
+    WHERE status IN ('downloading', 'queued')
+  `).run(message);
 }
 
 function normaliseSizePrefixes(): void {
@@ -144,10 +154,11 @@ function seedDefaultSettings(): void {
     connections_per_file: '4',
     auto_start_new_games: 'false',
     browse_items_per_page: '24',
-    browse_card_size: 'medium',
-    browse_show_descriptions: 'true',
+    browse_card_height: '172',
     browse_open_links_new_tab: 'true',
-    library_card_size: 'medium',
+    library_card_height: '172',
+    card_ratio_width: '4',
+    card_ratio_height: '3',
     library_default_detail: 'false',
     library_show_file_urls: 'true',
     confirm_delete: 'true',
@@ -181,6 +192,12 @@ export const queries = {
   ),
   getDownloadById: db.prepare<DownloadRow, [number]>(
     `SELECT * FROM downloads WHERE id = ?`,
+  ),
+  getAllDownloads: db.prepare<DownloadRow, []>(
+    `SELECT * FROM downloads ORDER BY created_at ASC`,
+  ),
+  getDownloadsWithGid: db.prepare<DownloadRow, []>(
+    `SELECT * FROM downloads WHERE gid IS NOT NULL AND gid <> ''`,
   ),
   getAllSettings: db.prepare<SettingRow, []>(
     `SELECT * FROM settings`,

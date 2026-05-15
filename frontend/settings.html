@@ -48,30 +48,31 @@
               <h2>Browse</h2>
               <div class="settings-row">
                 <label class="settings-label" for="browse_items_per_page"><strong>Items per page</strong><span>Popular and search</span></label>
-                <span class="settings-control narrow"><input id="browse_items_per_page" name="browse_items_per_page" type="number" min="6" max="60" step="1"></span>
+                <span class="settings-control range-pair">
+                  <input id="browse_items_per_page" name="browse_items_per_page" type="range" min="6" max="60" step="1">
+                  <input data-linked-number="browse_items_per_page" type="number" min="6" max="60" step="1" aria-label="Items per page value">
+                </span>
               </div>
               <div class="settings-row">
-                <label class="settings-label" for="browse_card_size"><strong>Card size</strong><span>Browse grid</span></label>
-                <span class="settings-control select-control">
-                  <select id="browse_card_size" name="browse_card_size">
-                    <option value="compact">Compact</option>
-                    <option value="medium">Medium</option>
-                    <option value="large">Large</option>
-                  </select>
+                <label class="settings-label" for="browse_card_height"><strong>Card image height</strong><span>Browse grid pixels</span></label>
+                <span class="settings-control range-pair">
+                  <input id="browse_card_height" name="browse_card_height" type="range" min="120" max="320" step="4">
+                  <input data-linked-number="browse_card_height" type="number" min="120" max="320" step="4" aria-label="Browse card image height value">
                 </span>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="browse_open_links_new_tab"><strong>Open source pages in new tab</strong><span>FitGirl page buttons</span></label>
+                <span class="settings-control switch-control"><input id="browse_open_links_new_tab" name="browse_open_links_new_tab" type="checkbox"></span>
               </div>
             </section>
 
             <section class="settings-panel" data-settings-panel="library" hidden>
               <h2>Library</h2>
               <div class="settings-row">
-                <label class="settings-label" for="library_card_size"><strong>Card size</strong><span>Library grid</span></label>
-                <span class="settings-control select-control">
-                  <select id="library_card_size" name="library_card_size">
-                    <option value="compact">Compact</option>
-                    <option value="medium">Medium</option>
-                    <option value="large">Large</option>
-                  </select>
+                <label class="settings-label" for="library_card_height"><strong>Card image height</strong><span>Library grid pixels</span></label>
+                <span class="settings-control range-pair">
+                  <input id="library_card_height" name="library_card_height" type="range" min="120" max="320" step="4">
+                  <input data-linked-number="library_card_height" type="number" min="120" max="320" step="4" aria-label="Library card image height value">
                 </span>
               </div>
               <div class="settings-row">
@@ -102,6 +103,14 @@
                     <option value="comfortable">Comfortable</option>
                     <option value="spacious">Spacious</option>
                   </select>
+                </span>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="card_ratio_width"><strong>Card image ratio</strong><span>Width / height</span></label>
+                <span class="settings-control range-pair ratio-pair">
+                  <input id="card_ratio_width" name="card_ratio_width" type="number" min="1" max="8" step="1" aria-label="Card ratio width">
+                  <span class="ratio-separator">/</span>
+                  <input id="card_ratio_height" name="card_ratio_height" type="number" min="1" max="8" step="1" aria-label="Card ratio height">
                 </span>
               </div>
               <div class="settings-row">

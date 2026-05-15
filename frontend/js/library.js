@@ -109,10 +109,11 @@ function renderLibrary() {
   if (!lists.length) {
     root.innerHTML = `
       <div class="empty-state">
-        <div class="empty-icon">Library</div>
+        <div class="empty-icon"><span class="icon icon-library" aria-hidden="true"></span></div>
         <h3>No games in your library</h3>
         <p>Add a repack from Browse to see it here.</p>
       </div>`;
+    updateLibrarySidePanel(0);
     return;
   }
 
@@ -120,6 +121,7 @@ function renderLibrary() {
     const selected = lists.find(l => l.id === selectedListId);
     if (selected) {
       root.innerHTML = renderDetail(selected);
+      updateLibrarySidePanel(1, selected.name);
       return;
     }
   }
@@ -130,14 +132,16 @@ function renderLibrary() {
   if (!visible.length) {
     root.innerHTML = `
       <div class="empty-state">
-        <div class="empty-icon">Filter</div>
+        <div class="empty-icon"><span class="icon icon-browse" aria-hidden="true"></span></div>
         <h3>No matching games</h3>
         <p>Clear the library filter to show everything.</p>
       </div>`;
+    updateLibrarySidePanel(0);
     return;
   }
   const sizeClass = `card-size-${librarySettings.library_card_size || 'medium'}`;
   root.innerHTML = `<div class="library-grid ${sizeClass}">${visible.map(renderLibraryCard).join('')}</div>`;
+  updateLibrarySidePanel(visible.length);
 }
 
 function renderLibraryCard(lst) {
@@ -201,7 +205,6 @@ function renderDetail(lst) {
         <span data-detail-pct>${p.pct.toFixed(0)}%</span>
       </div>
       <div class="detail-tags">${cats.map(c => `<span>${esc(c)}</span>`).join('')}</div>
-      ${lst.description ? `<p class="detail-description">${esc(lst.description)}</p>` : ''}
       <button class="btn btn-primary btn-fw" data-action="toggle-game" data-detail-action type="button" ${action.disabled ? 'disabled' : ''}>${action.label}</button>
       ${lst.source_url ? `<a class="btn btn-ghost btn-fw" href="${esc(lst.source_url)}" target="_blank" rel="noopener">FitGirl page</a>` : ''}
       <button class="btn btn-danger btn-fw" data-action="delete-game" type="button">Delete</button>
@@ -394,10 +397,9 @@ function updateFileRow(row, dl) {
   if (fill) {
     const fillClass = fillClassForStatus(status);
     fill.className = `progress-fill ${fillClass}`.trim();
-    const current = Number.parseFloat(fill.style.width || '0') || 0;
     const next = Math.min(100, pct);
-    fill.style.width = `${Math.max(current, next).toFixed(1)}%`;
-    fill.closest('.progress-track')?.setAttribute('aria-valuenow', String(Math.max(current, next).toFixed(0)));
+    fill.style.width = `${next.toFixed(1)}%`;
+    fill.closest('.progress-track')?.setAttribute('aria-valuenow', String(next.toFixed(0)));
   }
   if (bytes) {
     bytes.textContent = `${fmtBytes(dl.bytes_downloaded)} / ${fmtBytes(dl.total_bytes, 'Unknown')}`;
@@ -470,11 +472,28 @@ async function toggleDownload(dl) {
   if (runningStatuses.has(dl.status)) {
     return API.req(`/api/downloads/${dl.id}/pause`, 'POST');
   }
-  const res = await startOrResume(dl);
-  if (!res && dl.status === 'paused') {
-    await API.req(`/api/downloads/${dl.id}/stop`, 'POST');
-  }
-  return res;
+  return startOrResume(dl);
+}
+
+function setSideText(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = value;
+}
+
+function updateLibrarySidePanel(visibleCount = null, selectedName = '') {
+  const visible = visibleCount ?? (libraryFilter
+    ? lists.filter(lst => String(lst.name || '').toLowerCase().includes(libraryFilter)).length
+    : lists.length);
+  setSideText('library-visible-count', String(visible));
+  setSideText('library-selected-name', selectedName || (selectedListId ? 'selected' : 'none'));
+  setSideText('library-filter-state', libraryFilter ? 'on' : 'off');
+}
+
+function updateLibraryRuntime(aria2Ok, downloads = []) {
+  const total = downloads.reduce((s, d) => s + (d.speed || 0), 0);
+  const active = downloads.filter(d => runningStatuses.has(d.status)).length;
+  setSideText('library-runtime-aria', aria2Ok ? (active ? `${active} active` : 'idle') : 'offline');
+  setSideText('library-runtime-speed', fmtSpeed(total));
 }
 
 async function toggleGame(listId) {
@@ -638,7 +657,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   API.onProgress((msg) => {
     liveById = new Map((msg.data || []).map(d => [d.id, d]));
+    updateLibraryRuntime(msg.aria2_ok, msg.data || []);
     if (lists.length) refreshLiveProgress();
   });
   loadLibrary();
+  API.req('/api/status').then(status => {
+    if (status) updateLibraryRuntime(status.aria2_running, []);
+  });
 });

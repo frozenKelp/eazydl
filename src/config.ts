@@ -1,7 +1,7 @@
 import path from 'path';
 
-export const BASE_DIR = import.meta.dir;
-export const PROJECT_ROOT = path.resolve(BASE_DIR, '..');
+export const PROJECT_ROOT = path.resolve(process.env.EASYDL_ROOT ?? process.cwd());
+export const BASE_DIR = path.join(PROJECT_ROOT, 'src');
 export const FRONTEND_DIR = path.join(PROJECT_ROOT, 'frontend');
 export const DATA_DIR = path.join(PROJECT_ROOT, 'data');
 export const DOWNLOADS_DIR = path.join(PROJECT_ROOT, 'downloads');

@@ -17,41 +17,23 @@ class EasyShell extends HTMLElement {
       <div class="app-shell">
         <nav class="side-nav" aria-label="Primary navigation">
           <a class="nav-logo" href="/library" aria-label="EasyDL library">
-            <span class="nav-logo-icon">ED</span>
+            <img class="nav-logo-icon" src="/favicon.svg" alt="">
             <span class="brand-copy">
               <span class="brand-name">EasyDL</span>
-              <span class="brand-subtitle">local download workspace</span>
             </span>
           </a>
 
-          <div class="nav-section-title">Workspace</div>
           <div class="nav-links">
             ${this.navLink('/library', 'library', 'Library')}
             ${this.navLink('/browse', 'browse', 'Browse')}
             ${this.navLink('/settings', 'settings', 'Settings')}
           </div>
 
-          <div class="nav-section-title">Quick Access</div>
-          <div class="quick-links" aria-label="Quick access">
-            <a class="quick-link" href="/library"><span class="icon icon-path" aria-hidden="true"></span><span>Saved games</span></a>
-            <a class="quick-link" href="/browse"><span class="icon icon-browse" aria-hidden="true"></span><span>FitGirl index</span></a>
-          </div>
-
           <div class="nav-spacer"></div>
-
-          <div class="nav-status">
-            <div class="status-caption"><span>aria2c</span><span id="nav-speed" class="nav-speed" aria-live="polite"></span></div>
-            <div class="aria2-pill"><span id="nav-dot" class="status-dot"></span><span id="nav-label">checking</span></div>
-          </div>
         </nav>
 
         <section class="app-workspace">
           <header class="topbar">
-            <div class="tab-strip" aria-label="Open tabs">
-              ${this.navLink('/library', 'library', 'Library', 'tab-link')}
-              ${this.navLink('/browse', 'browse', 'Browse', 'tab-link')}
-              ${this.navLink('/settings', 'settings', 'Settings', 'tab-link')}
-            </div>
             <div class="command-row">
               <div class="address-bar" aria-label="Current location">
                 <span class="icon icon-path" aria-hidden="true"></span>

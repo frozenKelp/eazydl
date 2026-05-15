@@ -14,7 +14,7 @@
   <easy-shell page="browse" label="Browse" meta="covers, sizes, links">
     <template data-shell-actions>
       <form id="search-form" class="search-form">
-        <input id="search-input" type="search" placeholder="Search games" autocomplete="off">
+        <input id="search-input" type="search" placeholder="Search games" autocomplete="off" aria-label="Search games">
         <button class="btn btn-primary" type="submit"><span class="icon icon-browse" aria-hidden="true"></span><span>Search</span></button>
         <button id="popular-btn" class="btn btn-ghost" type="button">Popular</button>
       </form>
@@ -25,45 +25,13 @@
         <section class="main-pane">
           <div class="pane-header">
             <div class="pane-title"><span class="icon icon-browse" aria-hidden="true"></span><span>FitGirl Index</span></div>
-            <div class="pane-meta">fast results, lazy details</div>
           </div>
           <div class="pane-body">
             <section id="browse-results" aria-live="polite">
-              <div class="loading"><span class="spinner"></span> Loading popular this year...</div>
+              <div class="loading"><span class="spinner"></span> Loading Browse...</div>
             </section>
           </div>
         </section>
-
-        <aside class="utility-pane">
-          <div class="pane-header">
-            <div class="pane-title"><span class="icon icon-path" aria-hidden="true"></span><span>Sources</span></div>
-            <div class="pane-meta">remote</div>
-          </div>
-          <div class="pane-body utility-stack">
-            <section class="mini-section">
-              <div class="mini-title">Index</div>
-              <div class="mini-list">
-                <div class="mini-row"><span>Source</span><strong>FitGirl</strong></div>
-                <div class="mini-row"><span>Links</span><strong>FuckingFast</strong></div>
-                <div class="mini-row"><span>Details</span><strong>lazy</strong></div>
-              </div>
-            </section>
-            <section class="mini-section">
-              <div class="mini-title">Add Flow</div>
-              <div class="mini-list">
-                <div class="mini-row"><span>Entry</span><strong>library</strong></div>
-                <div class="mini-row"><span>Files</span><strong>pending</strong></div>
-                <div class="mini-row"><span>Queue</span><strong>optional</strong></div>
-              </div>
-            </section>
-            <section class="mini-section" id="browse-detail-panel">
-              <div class="mini-title">Selected</div>
-              <div class="mini-list">
-                <div class="mini-row"><span>Click a card to inspect it</span></div>
-              </div>
-            </section>
-          </div>
-        </aside>
       </div>
     </main>
   </easy-shell>
