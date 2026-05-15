@@ -3,6 +3,10 @@ import { execFile as execFileCallback } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { promisify } from 'util';
+import { db, queries, type DownloadRow } from './db/database.js';
+import { cleanFilename, resolveFuckingFastDownloadInfo } from './scraper.js';
+import { cleanUrl, HttpError, isPublicHttpUrl } from './security.js';
+import { FUCKINGFAST_HOSTS, PROGRESS_DB_WRITE_INTERVAL_MS, START_RESOLVE_CONCURRENCY } from './config.js';
 
 const execFile = promisify(execFileCallback);
 const RPC_URL = 'http://localhost:6800/jsonrpc';
@@ -31,6 +35,11 @@ const STATUS_MAP: Record<string, string> = {
   removed: 'pending',
 };
 
+const RECOVERABLE_PARTIAL_ERRORS = [
+  'invalid range header',
+  'no uri available',
+];
+
 let rpcIdCounter = 1;
 
 async function rpc(method: string, params: unknown[] = []): Promise<unknown> {
@@ -56,7 +65,7 @@ async function findAria2c(): Promise<string> {
     const first = stdout.split(/\r?\n/).map(line => line.trim()).filter(Boolean)[0];
     if (first) return first;
   } catch {
-    // Fall through to the helpful error below.
+    // Fall through
   }
   throw new Error(
     'aria2c executable not found.\n' +
@@ -67,7 +76,7 @@ async function findAria2c(): Promise<string> {
   );
 }
 
-class Aria2Manager {
+export class Aria2Service {
   private process: ChildProcess | null = null;
   private ownsProcess = false;
   private gidMap = new Map<number, string>();
@@ -79,6 +88,11 @@ class Aria2Manager {
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private pollRunning = false;
   private pollFailures = 0;
+
+  private startingDownloads = new Set<number>();
+  private cancelledStarts = new Set<number>();
+  private activeResolves = 0;
+  private resolveQueue: Array<() => void> = [];
 
   isRunning = false;
   maxConcurrent = 3;
@@ -98,7 +112,7 @@ class Aria2Manager {
       console.log('Reused existing aria2c daemon on port 6800.');
       return;
     } catch {
-      // Start our own daemon below.
+      // Start our own daemon below
     }
 
     const aria2cBin = await findAria2c();
@@ -145,7 +159,7 @@ class Aria2Manager {
       try {
         await rpc('aria2.shutdown');
       } catch {
-        // Ignore shutdown races.
+        // Ignore shutdown races
       }
     }
     this.process?.kill();
@@ -326,8 +340,6 @@ class Aria2Manager {
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
     if (freshStart) this.discardPartialFiles(outputPath);
 
-    // FuckingFast frequently mishandles bounded range requests, so a single
-    // connection is more reliable than segmented downloads for this host.
     const connections = 1;
     const gid = await rpc('aria2.addUri', [
       [url],
@@ -465,6 +477,195 @@ class Aria2Manager {
       return { aria2_running: false };
     }
   }
+
+  // Download service integration
+  needsFreshStart(message: string | null | undefined): boolean {
+    const text = (message ?? '').toLowerCase();
+    return RECOVERABLE_PARTIAL_ERRORS.some(marker => text.includes(marker));
+  }
+
+  private acquireResolveSlot(): Promise<void> {
+    if (this.activeResolves < START_RESOLVE_CONCURRENCY) {
+      this.activeResolves++;
+      return Promise.resolve();
+    }
+    return new Promise(resolve => {
+      this.resolveQueue.push(() => {
+        this.activeResolves++;
+        resolve();
+      });
+    });
+  }
+
+  private releaseResolveSlot(): void {
+    this.activeResolves = Math.max(0, this.activeResolves - 1);
+    const next = this.resolveQueue.shift();
+    if (next) next();
+  }
+
+  releaseStartingDownload(dlId: number): void {
+    this.startingDownloads.delete(dlId);
+    this.cancelledStarts.delete(dlId);
+  }
+
+  cancelStartingDownload(dlId: number): void {
+    if (this.startingDownloads.has(dlId)) this.cancelledStarts.add(dlId);
+  }
+
+  startWasCancelled(dlId: number): boolean {
+    return this.cancelledStarts.has(dlId);
+  }
+
+  isStartingDownload(dlId: number): boolean {
+    return this.startingDownloads.has(dlId);
+  }
+
+  async queueDownloadStart(
+    dl: DownloadRow,
+    basePath: string,
+    allowPaused = false,
+  ): Promise<'queued' | 'already_running' | 'completed' | 'paused' | 'skipped'> {
+    if (!this.isRunning) throw new HttpError(503, 'aria2c is not running. See server logs.');
+
+    let live = this.getProgress(dl.id);
+    const isStarting = this.isStartingDownload(dl.id);
+    let effectiveStatus = live?.status ?? dl.status;
+
+    if (isStarting || (live && ['downloading', 'queued'].includes(effectiveStatus))) {
+      return 'already_running';
+    }
+    if (live && ['failed', 'pending'].includes(effectiveStatus)) {
+      await this.stop(dl.id);
+      live = undefined;
+    }
+    if (['downloading', 'queued'].includes(effectiveStatus) && !live && !isStarting) {
+      effectiveStatus = 'pending';
+    }
+    if (effectiveStatus === 'completed') return 'completed';
+    if (effectiveStatus === 'paused' && !allowPaused) return 'paused';
+    if (!['pending', 'failed', 'paused'].includes(effectiveStatus)) return 'skipped';
+
+    const freshStart = effectiveStatus === 'failed' ||
+      this.needsFreshStart(live?.error ?? dl.error_message);
+
+    db.prepare<unknown, [number, number]>(`
+      UPDATE downloads
+      SET status='queued',
+          error_message=NULL,
+          bytes_downloaded=CASE WHEN ? THEN 0 ELSE bytes_downloaded END
+      WHERE id=?
+    `).run(freshStart ? 1 : 0, dl.id);
+
+    this.cancelledStarts.delete(dl.id);
+    this.startingDownloads.add(dl.id);
+
+    const listRow = db.prepare<{ name: string }, [number]>(
+      `SELECT name FROM link_lists WHERE id=?`,
+    ).get(dl.list_id);
+    const listName = listRow?.name ?? 'default';
+
+    this.resolveAndStart(dl.id, basePath, listName, freshStart).catch(err => {
+      console.error(`resolveAndStart failed for dl_id=${dl.id}:`, err);
+    });
+
+    return 'queued';
+  }
+
+  private async resolveAndStart(
+    dlId: number,
+    basePath: string,
+    listName: string,
+    freshStart = false,
+  ): Promise<void> {
+    let actualUrl: string | null = null;
+    let outputPath: string | null = null;
+    let lastDbWrite = 0;
+
+    try {
+      await this.acquireResolveSlot();
+      try {
+        const dl = queries.getDownloadById.get(dlId);
+        if (!dl || dl.status !== 'queued' || this.startWasCancelled(dlId)) return;
+
+        try {
+          const sourceUrl = await cleanUrl(dl.source_url, FUCKINGFAST_HOSTS, 'download link');
+          const resolved = await resolveFuckingFastDownloadInfo(sourceUrl);
+          if (!(await isPublicHttpUrl(resolved.url))) {
+            throw new Error('Resolved download URL is not public HTTP(S).');
+          }
+
+          actualUrl = resolved.url;
+          const filename = cleanFilename(dl.filename) ??
+            cleanFilename(resolved.filename) ??
+            cleanFilename(actualUrl) ??
+            `file_${dlId}`;
+          outputPath = path.join(basePath, this.safeListName(listName), filename);
+
+          const latest = queries.getDownloadById.get(dlId);
+          if (!latest || latest.status !== 'queued' || this.startWasCancelled(dlId)) return;
+          db.prepare<unknown, [string, string, number]>(
+            `UPDATE downloads SET resolved_url=?, filename=? WHERE id=?`,
+          ).run(actualUrl, filename, dlId);
+        } catch (err) {
+          if (!this.startWasCancelled(dlId)) {
+            const msg = err instanceof Error ? err.message : String(err);
+            db.prepare<unknown, [string, number]>(
+              `UPDATE downloads SET status='failed', error_message=? WHERE id=?`,
+            ).run(msg.slice(0, 500), dlId);
+          }
+          return;
+        }
+      } finally {
+        this.releaseResolveSlot();
+      }
+
+      if (!actualUrl || !outputPath) return;
+
+      const onUpdate = async (snap: ProgressSnapshot): Promise<void> => {
+        const now = Date.now();
+        const isTerminal = ['completed', 'failed', 'paused'].includes(snap.status);
+        if (!isTerminal && now - lastDbWrite < PROGRESS_DB_WRITE_INTERVAL_MS) return;
+        lastDbWrite = now;
+
+        db.prepare<unknown, [string, number, number, string, string, string | null, string | null, number]>(`
+          UPDATE downloads
+          SET status=?,
+              bytes_downloaded=?,
+              total_bytes=?,
+              filename=COALESCE(NULLIF(?, ''), filename),
+              completed_at=CASE WHEN ? = 'completed' THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') ELSE completed_at END,
+              error_message=CASE WHEN ? IS NOT NULL THEN ? ELSE error_message END
+          WHERE id=?
+        `).run(
+          snap.status,
+          snap.bytes_downloaded,
+          snap.total_bytes,
+          cleanFilename(snap.filename) ?? '',
+          snap.status,
+          snap.error,
+          snap.error?.slice(0, 500) ?? null,
+          dlId,
+        );
+      };
+
+      if (this.startWasCancelled(dlId)) return;
+      await this.enqueue(dlId, actualUrl, outputPath, onUpdate, freshStart);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Unexpected start task failure for dl_id=${dlId}:`, err);
+      if (!this.startWasCancelled(dlId)) {
+        db.prepare<unknown, [string, number]>(
+          `UPDATE downloads SET status='failed', error_message=? WHERE id=?`,
+        ).run(msg.slice(0, 500), dlId);
+      }
+    } finally {
+      this.releaseStartingDownload(dlId);
+    }
+  }
+
+  private safeListName(name: string): string {
+    return name.replace(/[^a-zA-Z0-9 _-]/g, '_').replace(/^[_. ]+|[_. ]+$/g, '') || 'default';
+  }
 }
 
-export const dm = new Aria2Manager();
+export const aria2 = new Aria2Service();

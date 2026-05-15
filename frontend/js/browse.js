@@ -58,7 +58,17 @@ async function loadBrowse(query = currentQuery, page = currentPage) {
   });
   const data = await API.req(`/api/scrape/search?${params.toString()}`);
   if (requestId !== browseRequestId) return;
-  if (!data) return;
+  if (!data) {
+    root.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">Offline</div>
+        <h3>Could not load Browse</h3>
+        <p>Check the server log or try again in a moment.</p>
+        <button id="retry-browse" class="btn btn-primary" type="button">Retry</button>
+      </div>`;
+    document.getElementById('retry-browse')?.addEventListener('click', () => loadBrowse(currentQuery, currentPage));
+    return;
+  }
 
   const games = data.games || [];
   if (!games.length) {

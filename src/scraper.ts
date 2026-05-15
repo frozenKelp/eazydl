@@ -1,17 +1,95 @@
 import * as cheerio from 'cheerio';
 import type { CheerioAPI } from 'cheerio';
 import type { AnyNode, Element } from 'domhandler';
+import { chromium, type Browser } from 'playwright';
 import { FUCKINGFAST_HOSTS, FITGIRL_HOSTS } from './config.js';
 
 const HEADERS = {
   accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
   'accept-language': 'en-US,en;q=0.5',
+  'accept-encoding': 'gzip, deflate, br',
+  'cache-control': 'max-age=0',
   referer: 'https://fitgirl-repacks.site/',
   'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+  'sec-ch-ua': '"Not A;Brand";v="99", "Chromium";v="131", "Google Chrome";v="131"',
+  'sec-ch-ua-mobile': '?0',
+  'sec-ch-ua-platform': '"Windows"',
+  'sec-fetch-dest': 'document',
+  'sec-fetch-mode': 'navigate',
+  'sec-fetch-site': 'same-origin',
+  'sec-fetch-user': '?1',
+  'upgrade-insecure-requests': '1',
 };
 
 const POPULAR_REPACKS_URL = 'https://fitgirl-repacks.site/popular-repacks-of-the-year/';
 const CACHE_TTL_MS = 5 * 60 * 1000;
+
+let browser: Browser | null = null;
+let browserLaunchPromise: Promise<Browser> | null = null;
+
+async function getBrowser(): Promise<Browser> {
+  if (browser) return browser;
+  if (browserLaunchPromise) return browserLaunchPromise;
+
+  browserLaunchPromise = chromium.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+  }).then(launched => {
+    browser = launched;
+    launched.on('disconnected', () => {
+      if (browser === launched) browser = null;
+    });
+    return launched;
+  }).finally(() => {
+    browserLaunchPromise = null;
+  });
+
+  return browserLaunchPromise;
+}
+
+async function browserFetchHtml(url: string): Promise<string> {
+  const browserInstance = await getBrowser();
+  const context = await browserInstance.newContext({
+    userAgent: HEADERS['user-agent'],
+    viewport: { width: 1920, height: 1080 },
+    locale: 'en-US',
+    extraHTTPHeaders: {
+      'accept-language': HEADERS['accept-language'],
+      referer: HEADERS.referer,
+      'sec-ch-ua': HEADERS['sec-ch-ua'],
+      'sec-ch-ua-mobile': HEADERS['sec-ch-ua-mobile'],
+      'sec-ch-ua-platform': HEADERS['sec-ch-ua-platform'],
+      'sec-fetch-dest': HEADERS['sec-fetch-dest'],
+      'sec-fetch-mode': HEADERS['sec-fetch-mode'],
+      'sec-fetch-site': HEADERS['sec-fetch-site'],
+      'sec-fetch-user': HEADERS['sec-fetch-user'],
+      'upgrade-insecure-requests': HEADERS['upgrade-insecure-requests'],
+    },
+  });
+  const page = await context.newPage();
+
+  try {
+    const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    if (!response) {
+      throw new Error(`No response loading ${url}`);
+    }
+    const status = response.status();
+    if (status >= 400) {
+      if (status === 403) {
+        throw new Error(
+          `HTTP 403 fetching ${url}. The FitGirl site is blocking requests with DDoS protection/anti-bot measures. ` +
+          'This cannot be scraped directly from the app without a browser-capable proxy or a different source.',
+        );
+      }
+      throw new Error(`HTTP ${status} fetching ${url}`);
+    }
+    await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => null);
+    return await page.content();
+  } finally {
+    await page.close();
+    await context.close();
+  }
+}
 
 const ARCHIVE_RE = /(?<name>[A-Za-z0-9][A-Za-z0-9 ._+()[\]{}'!,&@#$%^=-]{2,240}\.(?:part\d+\.rar|rar|r\d{2}|zip|7z|iso|bin))/i;
 const ARCHIVE_RE_GLOBAL = /(?<name>[A-Za-z0-9][A-Za-z0-9 ._+()[\]{}'!,&@#$%^=-]{2,240}\.(?:part\d+\.rar|rar|r\d{2}|zip|7z|iso|bin))/gi;
@@ -138,15 +216,7 @@ function bestFilenameFromText(text: string): string | null {
 }
 
 async function fetchHtml(url: string): Promise<string> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000);
-  try {
-    const resp = await fetch(url, { headers: HEADERS, signal: controller.signal });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status} fetching ${url}`);
-    return await resp.text();
-  } finally {
-    clearTimeout(timer);
-  }
+  return await browserFetchHtml(url);
 }
 
 export async function getFuckingFastDownloads(

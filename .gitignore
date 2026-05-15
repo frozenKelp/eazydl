@@ -8,7 +8,7 @@ dist
 
 # Database files
 *.db
-data/
+data
 *.sqlite
 *.sqlite3
 
