@@ -1,0 +1,23 @@
+[project]
+name = "eazydl"
+version = "0.1.0"
+description = "Local FitGirl index browser and aria2 download workspace"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "beautifulsoup4>=4.12,<5",
+  "PyYAML>=6,<7",
+  "requests>=2.31,<3",
+  "starlette>=0.37,<1",
+  "uvicorn[standard]>=0.29,<1",
+]
+
+[project.scripts]
+eazydl = "eazydl.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+package = true

@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EasyDL</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">EasyDL</div>
+    <nav class="tabs" aria-label="Main">
+      <button class="tab active" data-view="browse">Browse</button>
+      <button class="tab" data-view="library">Library</button>
+      <button class="tab" data-view="downloads">Downloads</button>
+      <button class="tab" data-view="settings">Settings</button>
+    </nav>
+    <div class="status-pill" id="index-pill">Index</div>
+  </header>
+
+  <main>
+    <section id="setup" class="setup hidden">
+      <div>
+        <h1>Local Index</h1>
+        <p id="setup-copy">No local FitGirl index was found.</p>
+      </div>
+      <div class="actions">
+        <button id="setup-rebuild">Rebuild</button>
+        <button id="setup-update" class="secondary">Update</button>
+      </div>
+    </section>
+
+    <section id="browse" class="view active">
+      <div class="toolbar">
+        <input id="search-input" type="search" placeholder="Search games, genres, tags" autocomplete="off">
+        <button id="search-button">Search</button>
+        <button id="update-index" class="secondary">Update Index</button>
+      </div>
+      <div id="search-meta" class="meta"></div>
+      <div id="results" class="grid"></div>
+    </section>
+
+    <section id="library" class="view">
+      <div class="toolbar">
+        <h2>Library</h2>
+        <button id="refresh-library" class="secondary">Refresh</button>
+      </div>
+      <div id="library-list" class="stack"></div>
+    </section>
+
+    <section id="downloads" class="view">
+      <div class="toolbar">
+        <h2>Downloads</h2>
+        <div class="actions">
+          <button id="start-selected">Start</button>
+          <button id="pause-selected" class="secondary">Pause</button>
+          <button id="resume-selected" class="secondary">Resume</button>
+          <button id="stop-selected" class="danger">Stop</button>
+        </div>
+      </div>
+      <div id="download-stats" class="meta"></div>
+      <div id="downloads-list" class="stack"></div>
+    </section>
+
+    <section id="settings" class="view">
+      <form id="settings-form" class="settings-grid">
+        <label>Download Path <input name="download_path" type="text"></label>
+        <label>Max Concurrent <input name="max_concurrent" type="number" min="1" max="32"></label>
+        <label>Connections Per File <input name="connections_per_file" type="number" min="1" max="32"></label>
+        <label>Index TTL Hours <input name="index_update_ttl_hours" type="number" min="1" max="720"></label>
+        <label class="check"><input name="auto_update_on_start" type="checkbox"> Auto update on start</label>
+        <button>Save Settings</button>
+      </form>
+    </section>
+  </main>
+
+  <dialog id="game-dialog">
+    <div id="game-detail"></div>
+    <form method="dialog"><button>Close</button></form>
+  </dialog>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
