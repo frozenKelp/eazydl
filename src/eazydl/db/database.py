@@ -58,6 +58,15 @@ class Database:
         self.conn.executemany(sql, params)
         self.conn.commit()
 
+    def close(self) -> None:
+        self.conn.close()
+
+    def __enter__(self) -> "Database":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
     def get_settings(self) -> dict[str, str]:
         return {row["key"]: row["value"] for row in self.rows("SELECT key, value FROM settings")}
 

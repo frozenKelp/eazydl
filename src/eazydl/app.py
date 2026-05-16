@@ -37,20 +37,26 @@ async def progress_socket(websocket: WebSocket) -> None:
         return
 
 
-async def on_startup() -> None:
-    app = create_app.instance
-    settings = app.state.db.get_settings()
-    if settings.get("auto_update_on_start") == "true" and app.state.index_store.exists:
-        status = app.state.index_store.status()
-        ttl_seconds = int(settings.get("index_update_ttl_hours", "24")) * 3600
-        mtime = status.get("index_mtime") or 0
-        if time.time() - float(mtime) >= ttl_seconds:
-            app.state.index_updater.start("update", background=True)
-    app.state.downloads.start()
+def make_startup_handler(app: Starlette):
+    async def on_startup() -> None:
+        settings = app.state.db.get_settings()
+        if settings.get("auto_update_on_start") == "true" and app.state.index_store.exists:
+            status = app.state.index_store.status()
+            ttl_seconds = int(settings.get("index_update_ttl_hours", "24")) * 3600
+            mtime = status.get("index_mtime") or 0
+            if time.time() - float(mtime) >= ttl_seconds:
+                app.state.index_updater.start("update", background=True)
+        app.state.downloads.start()
+
+    return on_startup
 
 
-async def on_shutdown() -> None:
-    create_app.instance.state.downloads.shutdown()
+def make_shutdown_handler(app: Starlette):
+    async def on_shutdown() -> None:
+        app.state.downloads.shutdown()
+        app.state.db.close()
+
+    return on_shutdown
 
 
 def create_app() -> Starlette:
@@ -66,13 +72,11 @@ def create_app() -> Starlette:
         Route("/", homepage, methods=["GET"]),
         Route("/{path:path}", homepage, methods=["GET"]),
     ]
-    app = Starlette(routes=routes, on_startup=[on_startup], on_shutdown=[on_shutdown])
+    app = Starlette(routes=routes)
     app.state.db = Database()
     app.state.index_store = IndexStore()
     app.state.index_updater = IndexUpdateManager(app.state.index_store, app.state.db)
     app.state.downloads = DownloadService(app.state.db)
-    create_app.instance = app
+    app.add_event_handler("startup", make_startup_handler(app))
+    app.add_event_handler("shutdown", make_shutdown_handler(app))
     return app
-
-
-create_app.instance: Starlette
