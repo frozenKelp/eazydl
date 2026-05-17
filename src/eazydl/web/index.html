@@ -7,68 +7,127 @@
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">EasyDL</div>
-    <nav class="tabs" aria-label="Main">
+  <header class="app-header">
+    <div class="identity">
+      <div class="mark">ED</div>
+      <div>
+        <div class="brand">EasyDL</div>
+        <div class="subtitle">Local index download workspace</div>
+      </div>
+    </div>
+    <nav class="tabs" aria-label="Main navigation">
       <button class="tab active" data-view="browse">Browse</button>
       <button class="tab" data-view="library">Library</button>
       <button class="tab" data-view="downloads">Downloads</button>
       <button class="tab" data-view="settings">Settings</button>
     </nav>
-    <div class="status-pill" id="index-pill">Index</div>
+    <div class="index-status" id="index-pill">Index loading</div>
   </header>
 
-  <main>
-    <section id="setup" class="setup hidden">
+  <main class="workspace">
+    <section id="setup" class="setup-strip hidden">
       <div>
-        <h1>Local Index</h1>
-        <p id="setup-copy">No local FitGirl index was found.</p>
+        <h1>Build the local index</h1>
+        <p id="setup-copy">No local FitGirl index was found. Rebuild once, then EasyDL can browse and update locally.</p>
       </div>
-      <div class="actions">
-        <button id="setup-rebuild">Rebuild</button>
-        <button id="setup-update" class="secondary">Update</button>
+      <div class="button-row">
+        <button id="setup-rebuild">Rebuild Index</button>
+        <button id="setup-update" class="secondary">Try Update</button>
+      </div>
+    </section>
+
+    <section class="overview" aria-label="Index overview">
+      <div class="metric">
+        <span>Indexed Games</span>
+        <strong id="metric-total">-</strong>
+      </div>
+      <div class="metric">
+        <span>Taxonomies</span>
+        <strong id="metric-taxonomies">-</strong>
+      </div>
+      <div class="metric">
+        <span>Downloads</span>
+        <strong id="metric-downloads">-</strong>
+      </div>
+      <div class="metric">
+        <span>aria2</span>
+        <strong id="metric-aria">-</strong>
       </div>
     </section>
 
     <section id="browse" class="view active">
-      <div class="toolbar">
-        <input id="search-input" type="search" placeholder="Search games, genres, tags" autocomplete="off">
-        <button id="search-button">Search</button>
+      <div class="section-head">
+        <div>
+          <h2>Browse Index</h2>
+          <p id="search-meta">Search the local JSON index.</p>
+        </div>
         <button id="update-index" class="secondary">Update Index</button>
       </div>
-      <div id="search-meta" class="meta"></div>
-      <div id="results" class="grid"></div>
+
+      <div class="searchbar">
+        <input id="search-input" type="search" placeholder="Search title, genre, tag" autocomplete="off">
+        <button id="search-button">Search</button>
+      </div>
+
+      <div id="results" class="game-grid" aria-live="polite"></div>
     </section>
 
     <section id="library" class="view">
-      <div class="toolbar">
-        <h2>Library</h2>
+      <div class="section-head">
+        <div>
+          <h2>Library</h2>
+          <p>Games you have added from the index.</p>
+        </div>
         <button id="refresh-library" class="secondary">Refresh</button>
       </div>
-      <div id="library-list" class="stack"></div>
+      <div id="library-list" class="list" aria-live="polite"></div>
     </section>
 
     <section id="downloads" class="view">
-      <div class="toolbar">
-        <h2>Downloads</h2>
-        <div class="actions">
+      <div class="section-head">
+        <div>
+          <h2>Downloads</h2>
+          <p id="download-stats">No transfer data yet.</p>
+        </div>
+        <div class="button-row">
+          <button id="select-visible" class="secondary">Select Visible</button>
           <button id="start-selected">Start</button>
           <button id="pause-selected" class="secondary">Pause</button>
           <button id="resume-selected" class="secondary">Resume</button>
           <button id="stop-selected" class="danger">Stop</button>
         </div>
       </div>
-      <div id="download-stats" class="meta"></div>
-      <div id="downloads-list" class="stack"></div>
+      <div id="downloads-list" class="download-groups" aria-live="polite"></div>
     </section>
 
     <section id="settings" class="view">
+      <div class="section-head">
+        <div>
+          <h2>Settings</h2>
+          <p>Local paths and transfer behavior.</p>
+        </div>
+      </div>
       <form id="settings-form" class="settings-grid">
-        <label>Download Path <input name="download_path" type="text"></label>
-        <label>Max Concurrent <input name="max_concurrent" type="number" min="1" max="32"></label>
-        <label>Connections Per File <input name="connections_per_file" type="number" min="1" max="32"></label>
-        <label>Index TTL Hours <input name="index_update_ttl_hours" type="number" min="1" max="720"></label>
-        <label class="check"><input name="auto_update_on_start" type="checkbox"> Auto update on start</label>
+        <label class="wide">
+          <span>Download Path</span>
+          <input name="download_path" type="text">
+        </label>
+        <label>
+          <span>Max Concurrent</span>
+          <input name="max_concurrent" type="number" min="1" max="32">
+        </label>
+        <label>
+          <span>Connections Per File</span>
+          <input name="connections_per_file" type="number" min="1" max="32">
+        </label>
+        <label>
+          <span>Index TTL Hours</span>
+          <input name="index_update_ttl_hours" type="number" min="1" max="720">
+        </label>
+        <label class="check">
+          <input name="auto_update_on_start" type="checkbox">
+          <span>Auto update on start</span>
+        </label>
         <button>Save Settings</button>
       </form>
     </section>
@@ -76,7 +135,6 @@
 
   <dialog id="game-dialog">
     <div id="game-detail"></div>
-    <form method="dialog"><button>Close</button></form>
   </dialog>
 
   <div id="toast" class="toast hidden"></div>

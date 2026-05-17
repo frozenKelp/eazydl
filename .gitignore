@@ -13,10 +13,20 @@ __pycache__/
 .pytest_cache/
 
 # Database files
+data/
 *.db
-data
 *.sqlite
 *.sqlite3
+
+# Downloads
+downloads/
+
+# Distribution files
+dist
+build
+*.zip
+*.tar.gz
+*.tar.xz
 
 # logs
 logs
