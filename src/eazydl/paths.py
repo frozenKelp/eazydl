@@ -8,7 +8,7 @@ PROJECT_ROOT = Path(os.getenv("EASYDL_ROOT", Path.cwd())).resolve()
 DATA_DIR = Path(os.getenv("EASYDL_DATA_DIR", PROJECT_ROOT / "data")).resolve()
 DOWNLOADS_DIR = Path(os.getenv("EASYDL_DOWNLOADS_DIR", PROJECT_ROOT / "downloads")).resolve()
 
-FITGIRL_INDEX_DIR = DATA_DIR / "fitgirl-index"
+FITGIRL_INDEX_DIR = Path(os.getenv("EASYDL_INDEX_DIR", PROJECT_ROOT / "fitgirl-index")).resolve()
 STORE_ROOT = FITGIRL_INDEX_DIR / "store"
 META_PATH = FITGIRL_INDEX_DIR / "meta.yaml"
 DB_PATH = DATA_DIR / "eazydl.db"

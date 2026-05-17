@@ -1,9 +1,10 @@
-# old Node/Bun dependency folders
-node_modules
-
 # output
 out
 dist
+build
+*.zip
+*.tar.gz
+*.tar.xz
 *.tgz
 
 # Python
@@ -18,15 +19,11 @@ data/
 *.sqlite
 *.sqlite3
 
+# Local FitGirl index cache
+fitgirl-index/
+
 # Downloads
 downloads/
-
-# Distribution files
-dist
-build
-*.zip
-*.tar.gz
-*.tar.xz
 
 # logs
 logs
@@ -38,7 +35,6 @@ logs
 .env.test.local
 .env.production.local
 .env.local
-.venv
 
 # caches
 .eslintcache

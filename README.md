@@ -1,23 +1,31 @@
 # EasyDL
 
-EasyDL is a local Python web app for browsing a local FitGirl JSON index and
-downloading selected files with `aria2c`.
+EasyDL is a local download manager built around a local FitGirl index.
 
-The app is local-only. It does not use a shared index service, GitHub token, or
-live FitGirl scraper routes. The FitGirl index is stored on disk under
-`data/fitgirl-index/store`, and EasyDL's own library/download state is stored in
-`data/eazydl.db`.
+It does three things:
+
+1. Keeps a searchable copy of FitGirl metadata on your machine.
+2. Lets you add games to a local library.
+3. Sends selected download links to `aria2c`.
+
+Normal browsing is fast because EasyDL searches the local index instead of
+loading FitGirl pages live. When you add a game, EasyDL uses the stored
+FuckingFast links and hands selected files to `aria2c`.
 
 Use it only for content you are allowed to download.
 
-## Requirements
+## Run
 
-- Python 3.12 or newer.
-- `uv`.
-- `aria2c` on `PATH` for downloads.
-- `curl` on `PATH` for the most reliable index updates.
+Requirements:
 
-## Quick Start
+```text
+Python 3.12+
+uv
+curl
+aria2c
+```
+
+Start the app:
 
 ```bash
 uv run eazydl
@@ -29,37 +37,122 @@ Open:
 http://127.0.0.1:8001
 ```
 
-The first run shows the setup view if `data/fitgirl-index/store/index.json` is
-missing. Use rebuild for a full local index, or compile a saved page cache with:
+No browser auto-open:
+
+```bash
+uv run eazydl --no-open
+```
+
+## How It Works
+
+EasyDL reads game data from:
+
+```text
+fitgirl-index/store/
+```
+
+The app state lives in:
+
+```text
+data/eazydl.db
+```
+
+Downloads go to:
+
+```text
+downloads/
+```
+
+That split is intentional:
+
+```text
+fitgirl-index/  the searchable FitGirl cache
+data/           EasyDL settings, library, download state
+downloads/      downloaded files
+```
+
+You can delete `data/` to reset EasyDL without deleting the FitGirl index.
+You can delete `fitgirl-index/` to rebuild the index without touching your
+library database.
+
+All runtime folders are ignored by git.
+
+## Index
+
+Update recent posts:
+
+```bash
+uv run python -m eazydl.indexer.crawler --update
+```
+
+Rebuild everything:
+
+```bash
+uv run python -m eazydl.indexer.crawler --rebuild
+```
+
+Build from saved API or HTML files:
 
 ```bash
 uv run python -m eazydl.indexer.crawler --source local-dir --local-dir saved_pages --reset-store
 ```
 
-## Project Layout
+The index stores compact records:
+
+```text
+index.json          searchable list
+taxonomies.json     tag/category name lookup
+games/              full game records with links
+```
+
+## Code Map
 
 ```text
 src/eazydl/
-|-- api/          HTTP and websocket routes
-|-- db/           SQLite schema and helpers
-|-- downloader/   aria2c RPC and link resolution
-|-- indexer/      local FitGirl indexer and store reader
-`-- web/          browser UI assets
+  __main__.py        command entry
+  app.py             local web app
+  paths.py           folder locations
+  api/               browser-facing routes
+  db/                SQLite setup
+  downloader/        aria2c control and link resolving
+  indexer/           FitGirl index reader/crawler
+  web/               HTML, CSS, JS
 ```
 
-Runtime data is ignored by git:
+## Checks
 
-```text
-data/eazydl.db
-data/fitgirl-index/meta.yaml
-data/fitgirl-index/store/
-downloads/
-```
-
-## Useful Commands
+Fast sanity check:
 
 ```bash
 uv run python -m compileall src/eazydl
-uv run python -m eazydl.indexer.crawler --update
-uv run python -m eazydl.indexer.crawler --rebuild
+```
+
+Package build:
+
+```bash
+uv build
+```
+
+Command help:
+
+```bash
+uv run eazydl --help
+uv run python -m eazydl.indexer.crawler --help
+```
+
+## Folder Overrides
+
+Defaults are simple, but you can move things if needed:
+
+```text
+EASYDL_ROOT           project root
+EASYDL_DATA_DIR       app database folder
+EASYDL_INDEX_DIR      FitGirl index folder
+EASYDL_DOWNLOADS_DIR  download folder
+```
+
+Example:
+
+```bash
+EASYDL_DOWNLOADS_DIR=D:\Games\Downloads uv run eazydl
 ```
