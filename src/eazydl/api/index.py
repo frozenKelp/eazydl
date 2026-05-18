@@ -24,6 +24,11 @@ async def search(request: Request) -> JSONResponse:
     return JSONResponse(request.app.state.index_store.search(query, page, limit))
 
 
+async def sections(request: Request) -> JSONResponse:
+    limit = int(request.query_params.get("limit", "18") or "18")
+    return JSONResponse(request.app.state.index_store.sections(limit))
+
+
 async def game(request: Request) -> JSONResponse:
     game_id = request.path_params["id_or_slug"]
     item = request.app.state.index_store.get_game(game_id)
@@ -37,5 +42,6 @@ index_routes = [
     Route("/api/index/update", update, methods=["POST"]),
     Route("/api/index/rebuild", rebuild, methods=["POST"]),
     Route("/api/index/search", search, methods=["GET"]),
+    Route("/api/index/sections", sections, methods=["GET"]),
     Route("/api/index/games/{id_or_slug:str}", game, methods=["GET"]),
 ]

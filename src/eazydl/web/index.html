@@ -4,138 +4,198 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EasyDL</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
-  <header class="app-header">
-    <div class="identity">
-      <div class="mark">ED</div>
-      <div>
-        <div class="brand">EasyDL</div>
-        <div class="subtitle">Local index download workspace</div>
+  <div id="boot-screen" class="boot-screen">
+    <div class="boot-card">
+      <div class="boot-logo">
+        <img src="/static/favicon.svg" alt="">
       </div>
+      <div id="boot-status">Starting EasyDL</div>
     </div>
-    <nav class="tabs" aria-label="Main navigation">
-      <button class="tab active" data-view="browse">Browse</button>
-      <button class="tab" data-view="library">Library</button>
-      <button class="tab" data-view="downloads">Downloads</button>
-      <button class="tab" data-view="settings">Settings</button>
+  </div>
+
+  <header class="topbar">
+    <div class="brand-lockup">
+      <img src="/static/favicon.svg" alt="">
+      <strong>EasyDL</strong>
+    </div>
+    <nav class="topnav" aria-label="Main navigation">
+      <button class="nav-tab active" data-view="browse">Browse</button>
+      <button class="nav-tab" data-view="library">Library</button>
+      <button class="nav-tab" data-view="downloads">Downloads</button>
+      <button class="nav-tab" data-view="settings">Settings</button>
     </nav>
-    <div class="index-status" id="index-pill">Index loading</div>
+    <div class="top-status">
+      <span id="index-pill">Index</span>
+      <span id="aria-pill">aria2</span>
+    </div>
   </header>
 
   <main class="workspace">
-    <section id="setup" class="setup-strip hidden">
-      <div>
-        <h1>Build the local index</h1>
-        <p id="setup-copy">No local FitGirl index was found. Rebuild once, then EasyDL can browse and update locally.</p>
-      </div>
+    <section id="setup" class="setup-screen hidden">
+      <img src="/static/favicon.svg" alt="">
+      <h1>Build the local index</h1>
+      <p id="setup-copy">No local FitGirl index was found.</p>
       <div class="button-row">
         <button id="setup-rebuild">Rebuild Index</button>
         <button id="setup-update" class="secondary">Try Update</button>
       </div>
     </section>
 
-    <section class="overview" aria-label="Index overview">
-      <div class="metric">
-        <span>Indexed Games</span>
-        <strong id="metric-total">-</strong>
+    <section id="browse" class="view active">
+      <div class="page-head">
+        <div>
+          <h1>Browse</h1>
+          <p id="search-meta">Latest entries from your local index.</p>
+        </div>
+        <div class="searchbar">
+          <input id="search-input" type="search" placeholder="Search title, genre, tag" autocomplete="off">
+          <button id="search-button">Search</button>
+        </div>
       </div>
-      <div class="metric">
-        <span>Taxonomies</span>
-        <strong id="metric-taxonomies">-</strong>
-      </div>
-      <div class="metric">
-        <span>Downloads</span>
-        <strong id="metric-downloads">-</strong>
-      </div>
-      <div class="metric">
-        <span>aria2</span>
-        <strong id="metric-aria">-</strong>
+      <div id="browse-sections" class="shelves"></div>
+      <div id="search-results-panel" class="hidden">
+        <h2>Search Results</h2>
+        <div id="results" class="poster-grid" aria-live="polite"></div>
       </div>
     </section>
 
-    <section id="browse" class="view active">
-      <div class="section-head">
-        <div>
-          <h2>Browse Index</h2>
-          <p id="search-meta">Search the local JSON index.</p>
-        </div>
-        <button id="update-index" class="secondary">Update Index</button>
-      </div>
-
-      <div class="searchbar">
-        <input id="search-input" type="search" placeholder="Search title, genre, tag" autocomplete="off">
-        <button id="search-button">Search</button>
-      </div>
-
-      <div id="results" class="game-grid" aria-live="polite"></div>
+    <section id="game" class="view">
+      <button id="back-to-browse" class="secondary back-button">Back to Browse</button>
+      <div id="game-page"></div>
     </section>
 
     <section id="library" class="view">
-      <div class="section-head">
-        <div>
-          <h2>Library</h2>
-          <p>Games you have added from the index.</p>
+      <div class="library-shell">
+        <aside class="library-rail">
+          <div class="rail-head">
+            <strong>Library</strong>
+            <button id="refresh-library" class="secondary small">Refresh</button>
+          </div>
+          <input id="library-filter" type="search" placeholder="Filter library" autocomplete="off">
+          <div id="library-list" class="library-list" aria-live="polite"></div>
+        </aside>
+        <div class="library-main">
+          <div id="library-home">
+            <div class="page-head slim">
+              <div>
+                <h1>Your Games</h1>
+                <p>Card library. Open a game for files, progress, and source info.</p>
+              </div>
+            </div>
+            <div id="library-grid" class="poster-grid library-grid" aria-live="polite"></div>
+          </div>
+          <div id="library-detail" class="hidden"></div>
         </div>
-        <button id="refresh-library" class="secondary">Refresh</button>
       </div>
-      <div id="library-list" class="list" aria-live="polite"></div>
     </section>
 
     <section id="downloads" class="view">
-      <div class="section-head">
-        <div>
-          <h2>Downloads</h2>
-          <p id="download-stats">No transfer data yet.</p>
-        </div>
-        <div class="button-row">
-          <button id="select-visible" class="secondary">Select Visible</button>
-          <button id="start-selected">Start</button>
-          <button id="pause-selected" class="secondary">Pause</button>
-          <button id="resume-selected" class="secondary">Resume</button>
-          <button id="stop-selected" class="danger">Stop</button>
-        </div>
+      <div class="downloads-hero">
+        <div id="current-download-panel" class="current-download-panel"></div>
+        <aside class="download-summary">
+          <div><span class="label">Network</span><strong id="download-speed">0 B/s</strong></div>
+          <div><span class="label">Active</span><strong id="download-active">0</strong></div>
+          <div><span class="label">Queued</span><strong id="download-queued">0</strong></div>
+          <div><span class="label">Selected</span><strong id="selected-count-inline">0</strong></div>
+        </aside>
       </div>
-      <div id="downloads-list" class="download-groups" aria-live="polite"></div>
+
+      <section class="download-section">
+        <div class="section-title">
+          <h2>Downloading Now</h2>
+          <div class="button-row">
+            <button id="select-active" class="secondary">Select Active</button>
+            <button id="pause-selected" class="secondary">Pause</button>
+            <button id="resume-selected" class="secondary">Resume</button>
+            <button id="stop-selected" class="danger">Stop</button>
+          </div>
+        </div>
+        <div id="downloading-now" class="download-list"></div>
+      </section>
+
+      <section class="download-section">
+        <div class="section-title">
+          <h2>Up Next</h2>
+          <div class="button-row">
+            <button id="select-queued" class="secondary">Select Queue</button>
+            <button id="clear-selected" class="secondary">Clear Selection</button>
+            <button id="start-selected">Start Selected</button>
+          </div>
+        </div>
+        <p id="download-note" class="section-note"></p>
+        <div id="download-queue" class="download-list"></div>
+      </section>
+
+      <section class="download-section">
+        <div class="section-title">
+          <h2>Finished / Failed</h2>
+        </div>
+        <div id="download-completed" class="download-list compact"></div>
+      </section>
     </section>
 
     <section id="settings" class="view">
-      <div class="section-head">
+      <div class="page-head slim">
         <div>
-          <h2>Settings</h2>
-          <p>Local paths and transfer behavior.</p>
+          <h1>Settings</h1>
+          <p>Local paths, index behavior, and downloader limits.</p>
         </div>
       </div>
-      <form id="settings-form" class="settings-grid">
-        <label class="wide">
-          <span>Download Path</span>
-          <input name="download_path" type="text">
-        </label>
-        <label>
-          <span>Max Concurrent</span>
-          <input name="max_concurrent" type="number" min="1" max="32">
-        </label>
-        <label>
-          <span>Connections Per File</span>
-          <input name="connections_per_file" type="number" min="1" max="32">
-        </label>
-        <label>
-          <span>Index TTL Hours</span>
-          <input name="index_update_ttl_hours" type="number" min="1" max="720">
-        </label>
-        <label class="check">
-          <input name="auto_update_on_start" type="checkbox">
-          <span>Auto update on start</span>
-        </label>
-        <button>Save Settings</button>
+      <form id="settings-form" class="settings-page">
+        <section class="settings-card">
+          <h2>Downloads</h2>
+          <label>
+            <span>Download Path</span>
+            <input name="download_path" type="text">
+          </label>
+          <div class="settings-row">
+            <label>
+              <span>Simultaneous Files</span>
+              <input name="max_concurrent" type="number" min="1" max="32">
+            </label>
+            <label>
+              <span>Connections Per File</span>
+              <input name="connections_per_file" type="number" min="1" max="32">
+            </label>
+          </div>
+        </section>
+
+        <section class="settings-card">
+          <h2>Index</h2>
+          <div class="settings-row">
+            <label>
+              <span>Update TTL Hours</span>
+              <input name="index_update_ttl_hours" type="number" min="1" max="720">
+            </label>
+            <label class="check">
+              <input name="auto_update_on_start" type="checkbox">
+              <span>Auto update on start</span>
+            </label>
+          </div>
+          <div class="button-row">
+            <button id="update-index" type="button" class="secondary">Update Index</button>
+            <button id="rebuild-index-settings" type="button" class="danger">Rebuild Index</button>
+          </div>
+        </section>
+
+        <section class="settings-card">
+          <h2>Status</h2>
+          <div class="status-grid">
+            <div><span>Games</span><strong id="metric-total">-</strong></div>
+            <div><span>Terms</span><strong id="metric-taxonomies">-</strong></div>
+            <div><span>Downloads</span><strong id="metric-downloads">-</strong></div>
+            <div><span>Selected</span><strong id="metric-selected">0</strong></div>
+          </div>
+        </section>
+
+        <button class="save-settings">Save Settings</button>
       </form>
     </section>
   </main>
-
-  <dialog id="game-dialog">
-    <div id="game-detail"></div>
-  </dialog>
 
   <div id="toast" class="toast hidden"></div>
   <script src="/static/app.js"></script>

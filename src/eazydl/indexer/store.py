@@ -12,6 +12,7 @@ class IndexStore:
         self.root = root
         self.index_path = self.root / "index.json"
         self.taxonomies_path = self.root / "taxonomies.json"
+        self.sections_path = self.root / "sections.json"
         self._index: list[dict[str, Any]] | None = None
         self._taxonomies: dict[str, dict[str, str]] | None = None
         self._by_id: dict[str, dict[str, Any]] = {}
@@ -117,3 +118,37 @@ class IndexStore:
         game = json.loads(path.read_text(encoding="utf-8-sig"))
         game["path"] = str(path.relative_to(self.root)).replace("\\", "/")
         return self.resolve_terms(game)
+
+    def sections(self, limit: int = 18) -> dict[str, Any]:
+        limit = max(1, min(60, limit))
+        rows = self.index()
+
+        def by_updated(item: dict[str, Any]) -> str:
+            return str(item.get("updated_at") or "")
+
+        def resolve_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            return [self.resolve_terms(item) for item in items[:limit]]
+
+        latest = sorted(rows, key=by_updated, reverse=True)
+        sections = [
+            {"id": "latest", "title": "Latest Repacks", "items": resolve_items(latest)},
+            {"id": "recently-updated", "title": "Recently Updated", "items": resolve_items(latest)},
+        ]
+
+        if self.sections_path.exists():
+            raw = json.loads(self.sections_path.read_text(encoding="utf-8-sig"))
+            labels = {
+                "top_month": "Most Popular Repacks of the Month",
+                "top_year": "Top Repacks of the Year",
+            }
+            for key, title in labels.items():
+                ids = raw.get(key) or []
+                items = []
+                for game_id in ids:
+                    entry = self.get_entry(str(game_id))
+                    if entry:
+                        items.append(entry)
+                if items:
+                    sections.insert(-1, {"id": key.replace("_", "-"), "title": title, "items": resolve_items(items)})
+
+        return {"sections": sections}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any, Iterable
@@ -10,6 +11,14 @@ from ..paths import DB_PATH, DOWNLOADS_DIR
 
 def utc_expr() -> str:
     return "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+
+
+def link_sort_key(link: dict[str, Any]) -> tuple[int, int, str]:
+    text = f"{link.get('filename') or ''} {link.get('url') or ''}".lower()
+    optional = int(any(word in text for word in ("optional", "bonus", "soundtrack", "credits", "language")))
+    match = re.search(r"(?:part|pt|\.)(\d{1,4})(?:\.|_|-|$)", text)
+    part = int(match.group(1)) if match else 9999
+    return (optional, part, text)
 
 
 class Database:
@@ -26,12 +35,20 @@ class Database:
     def init_schema(self) -> None:
         schema_path = Path(__file__).with_name("schema.sql")
         self.conn.executescript(schema_path.read_text(encoding="utf-8"))
+        self.ensure_columns()
         self.conn.commit()
+
+    def ensure_columns(self) -> None:
+        download_columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(downloads)").fetchall()}
+        if "queue_position" not in download_columns:
+            self.conn.execute("ALTER TABLE downloads ADD COLUMN queue_position INTEGER NOT NULL DEFAULT 0")
+        if "download_speed" not in download_columns:
+            self.conn.execute("ALTER TABLE downloads ADD COLUMN download_speed INTEGER NOT NULL DEFAULT 0")
 
     def seed_defaults(self) -> None:
         defaults = {
             "download_path": str(DOWNLOADS_DIR),
-            "max_concurrent": "3",
+            "max_concurrent": "1",
             "connections_per_file": "4",
             "auto_update_on_start": "true",
             "index_update_ttl_hours": "24",
@@ -40,6 +57,7 @@ class Database:
             "INSERT OR IGNORE INTO settings(key, value) VALUES(?, ?)",
             defaults.items(),
         )
+        self.conn.execute("UPDATE settings SET value='1' WHERE key='max_concurrent' AND value='3'")
         self.conn.commit()
 
     def rows(self, sql: str, params: Iterable[Any] = ()) -> list[dict[str, Any]]:
@@ -145,7 +163,7 @@ class Database:
             for row in self.rows("SELECT source_url FROM downloads WHERE library_item_id=?", (library_item_id,))
         }
         rows: list[tuple[Any, ...]] = []
-        for link in links:
+        for link in sorted(links, key=link_sort_key):
             url = str(link.get("url") or "").strip()
             if not url or url in existing:
                 continue
@@ -163,7 +181,23 @@ class Database:
         items = self.rows("SELECT * FROM library_items ORDER BY created_at DESC")
         for item in items:
             item["downloads"] = self.rows(
-                "SELECT * FROM downloads WHERE library_item_id=? ORDER BY id ASC",
+                """
+                SELECT *
+                FROM downloads
+                WHERE library_item_id=?
+                ORDER BY
+                  CASE status
+                    WHEN 'downloading' THEN 0
+                    WHEN 'queued' THEN 1
+                    WHEN 'paused' THEN 2
+                    WHEN 'pending' THEN 3
+                    WHEN 'failed' THEN 4
+                    WHEN 'completed' THEN 5
+                    ELSE 6
+                  END,
+                  CASE WHEN queue_position=0 THEN id ELSE queue_position END,
+                  id ASC
+                """,
                 (item["id"],),
             )
             item["download_count"] = len(item["downloads"])

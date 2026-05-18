@@ -45,10 +45,16 @@ async def batch_stop(request: Request) -> JSONResponse:
     return JSONResponse(request.app.state.downloads.stop(clean_ids(body.get("ids"))))
 
 
+async def batch_top(request: Request) -> JSONResponse:
+    body = await request.json()
+    return JSONResponse(request.app.state.downloads.move_to_top(clean_ids(body.get("ids"))))
+
+
 download_routes = [
     Route("/api/downloads", list_downloads, methods=["GET"]),
     Route("/api/downloads/batch/start", batch_start, methods=["POST"]),
     Route("/api/downloads/batch/pause", batch_pause, methods=["POST"]),
     Route("/api/downloads/batch/resume", batch_resume, methods=["POST"]),
     Route("/api/downloads/batch/stop", batch_stop, methods=["POST"]),
+    Route("/api/downloads/batch/top", batch_top, methods=["POST"]),
 ]

@@ -9,6 +9,17 @@ async def list_library(request: Request) -> JSONResponse:
     return JSONResponse({"items": request.app.state.db.library_payload()})
 
 
+async def get_library_item(request: Request) -> JSONResponse:
+    item_id = int(request.path_params["item_id"])
+    item = next((row for row in request.app.state.db.library_payload() if int(row["id"]) == item_id), None)
+    if not item:
+        return JSONResponse({"error": "Library item not found"}, status_code=404)
+    store = request.app.state.index_store
+    game = store.get_game(str(item["game_id"])) or {}
+    item["index_game"] = game
+    return JSONResponse({"item": item})
+
+
 async def add_library_item(request: Request) -> JSONResponse:
     body = await request.json()
     game_id = str(body.get("game_id") or body.get("id") or "").strip()
@@ -27,6 +38,10 @@ async def add_library_item(request: Request) -> JSONResponse:
 
 async def delete_library_item(request: Request) -> JSONResponse:
     item_id = int(request.path_params["item_id"])
+    rows = request.app.state.db.rows("SELECT id FROM downloads WHERE library_item_id=?", (item_id,))
+    ids = [int(row["id"]) for row in rows]
+    if ids:
+        request.app.state.downloads.stop(ids)
     request.app.state.db.execute("DELETE FROM library_items WHERE id=?", (item_id,))
     return JSONResponse({"status": "deleted"})
 
@@ -34,5 +49,6 @@ async def delete_library_item(request: Request) -> JSONResponse:
 library_routes = [
     Route("/api/library", list_library, methods=["GET"]),
     Route("/api/library", add_library_item, methods=["POST"]),
+    Route("/api/library/{item_id:int}", get_library_item, methods=["GET"]),
     Route("/api/library/{item_id:int}", delete_library_item, methods=["DELETE"]),
 ]
